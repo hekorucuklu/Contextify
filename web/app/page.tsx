@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 export default function Home() {
   const API_URL = useMemo(() => process.env.NEXT_PUBLIC_API_URL, []);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [file, setFile] = useState<File | null>(null);
 
   const [output, setOutput] = useState("");
@@ -11,8 +13,41 @@ export default function Home() {
 
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-
   const [copied, setCopied] = useState(false);
+
+  const [dragOver, setDragOver] = useState(false);
+
+  const openPicker = () => fileInputRef.current?.click();
+
+  const resetForNext = () => {
+    setFile(null);
+    setOutput("");
+    setTokens(null);
+    setErr("");
+    setCopied(false);
+
+    // Allow selecting the same file again (important!)
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const acceptFile = (f: File) => {
+    setErr("");
+    setCopied(false);
+
+    const isPdf =
+      f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+    if (!isPdf) {
+      setErr("Only PDF files are supported in this MVP.");
+      return;
+    }
+
+    if (f.size > 5 * 1024 * 1024) {
+      setErr("File too large (5MB max).");
+      return;
+    }
+
+    setFile(f);
+  };
 
   const submit = async () => {
     setErr("");
@@ -20,7 +55,7 @@ export default function Home() {
     setTokens(null);
 
     if (!file) {
-      setErr("Please select a PDF first.");
+      setErr("Please select a PDF first (or drag & drop one).");
       return;
     }
 
@@ -36,7 +71,6 @@ export default function Home() {
 
       const res = await fetch(`${API_URL}/convert`, { method: "POST", body: form });
 
-      // Robust parsing (handles non-json too)
       const text = await res.text();
       let data: any = {};
       try {
@@ -74,6 +108,32 @@ export default function Home() {
     window.setTimeout(() => setCopied(false), 2000);
   };
 
+  // Drag & Drop handlers
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setDragOver(true);
+  };
+
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (busy) return;
+
+    const f = e.dataTransfer.files?.[0];
+    if (f) acceptFile(f);
+  };
+
+  const fileLabel = file ? file.name : "Choose PDF (or drag & drop)";
+  const helperText = file
+    ? "Tip: You can change the file anytime."
+    : "Tip: Drag & drop a PDF anywhere in this card.";
+
   return (
     <main
       style={{
@@ -92,12 +152,7 @@ export default function Home() {
         </div>
         <a
           href="#"
-          style={{
-            textDecoration: "none",
-            color: "#1F3A5F",
-            fontSize: 14,
-            opacity: 0.9,
-          }}
+          style={{ textDecoration: "none", color: "#1F3A5F", fontSize: 14, opacity: 0.9 }}
           onClick={(e) => {
             e.preventDefault();
             window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
@@ -107,19 +162,63 @@ export default function Home() {
         </a>
       </div>
 
-      {/* Card */}
+      {/* Card (Drop zone) */}
       <div
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
         style={{
+          position: "relative",
           marginTop: 18,
-          border: "1px solid #E2E8F0",
+          border: dragOver ? "1px solid #3BB3A9" : "1px solid #E2E8F0",
           borderRadius: 16,
           padding: 18,
           background: "#F8FAFC",
           boxShadow: "0 1px 0 rgba(15, 23, 42, 0.03)",
+          outline: dragOver ? "4px solid rgba(59, 179, 169, 0.15)" : "none",
+          transition: "outline 120ms ease, border-color 120ms ease",
         }}
       >
+        {/* Drag overlay */}
+        {dragOver && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 10,
+              borderRadius: 14,
+              background: "rgba(59, 179, 169, 0.10)",
+              border: "1px dashed #3BB3A9",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontWeight: 700,
+              color: "#0F172A",
+              pointerEvents: "none",
+            }}
+          >
+            Drop PDF to upload
+          </div>
+        )}
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,application/pdf"
+          disabled={busy}
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) acceptFile(f);
+          }}
+        />
+
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-          <label
+          {/* Choose/Change control */}
+          <button
+            type="button"
+            onClick={openPicker}
+            disabled={busy}
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -130,19 +229,36 @@ export default function Home() {
               borderRadius: 12,
               cursor: busy ? "not-allowed" : "pointer",
               opacity: busy ? 0.6 : 1,
+              fontWeight: 700,
             }}
+            title="Choose a PDF file"
           >
-            <span style={{ fontSize: 14, color: "#334155" }}>{file ? "Selected:" : "Choose PDF"}</span>
-            <strong style={{ fontSize: 14 }}>{file ? file.name : ""}</strong>
-            <input
-              type="file"
-              accept=".pdf,application/pdf"
-              disabled={busy}
-              style={{ display: "none" }}
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-            />
-          </label>
+            {file ? "Change PDF:" : "Choose PDF"}
+            <span style={{ fontWeight: 600, color: "#334155" }}>{file ? file.name : ""}</span>
+            {!file && <span style={{ fontWeight: 600, color: "#475569" }}>(or drag & drop)</span>}
+          </button>
 
+          {/* Clear / New */}
+          <button
+            type="button"
+            onClick={resetForNext}
+            disabled={busy && !file}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "1px solid #E2E8F0",
+              background: "#FFFFFF",
+              color: "#0F172A",
+              cursor: busy ? "not-allowed" : "pointer",
+              fontWeight: 600,
+              opacity: file || output || err ? 1 : 0.6,
+            }}
+            title="Clear and start a new conversion"
+          >
+            New / Clear
+          </button>
+
+          {/* Convert */}
           <button
             onClick={submit}
             disabled={busy || !file}
@@ -159,6 +275,7 @@ export default function Home() {
             {busy ? "Converting…" : "Convert"}
           </button>
 
+          {/* Copy */}
           <button
             onClick={copy}
             disabled={!output || busy}
@@ -167,7 +284,7 @@ export default function Home() {
               borderRadius: 12,
               border: "1px solid #E2E8F0",
               background: copied ? "#3BB3A9" : "#FFFFFF",
-              color: copied ? "#0F172A" : "#0F172A",
+              color: "#0F172A",
               cursor: !output || busy ? "not-allowed" : "pointer",
               fontWeight: 600,
             }}
@@ -193,6 +310,8 @@ export default function Home() {
             </span>
           )}
         </div>
+
+        <div style={{ marginTop: 10, fontSize: 13, color: "#475569" }}>{helperText}</div>
 
         {err && (
           <div
