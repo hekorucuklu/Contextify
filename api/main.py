@@ -12,10 +12,15 @@ app = FastAPI(title="Contextify API")
 # Şimdilik localhost; Vercel URL gelince burayı güncelleyeceğiz.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://contextify-neon.vercel.app"
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=False,
 )
+
 
 @app.get("/health")
 def health():
