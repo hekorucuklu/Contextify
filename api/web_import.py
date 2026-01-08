@@ -29,6 +29,12 @@ def fetch_readable_text(url: str, timeout_s: int = 15) -> str:
     if not _is_public_http_url(url):
         raise ValueError("Invalid URL. Please include http(s)://")
 
+    if r.status_code == 403:
+        raise ValueError(
+            "This site blocked server-side fetching (403). "
+            "Use the Contextify Bookmarklet to import directly from your browser."
+        )
+
     low = url.lower()
     if low.endswith(BLOCKED_EXTENSIONS):
         raise ValueError("This URL points to a non-HTML file. Please paste a web page URL.")
