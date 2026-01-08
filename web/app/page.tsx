@@ -7,7 +7,6 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [url, setUrl] = useState("");
-  const [pasted, setPasted] = useState("");
 
   const [file, setFile] = useState<File | null>(null);
 
@@ -34,7 +33,6 @@ export default function Home() {
   const resetForNext = () => {
     setFile(null);
     setUrl("");
-    setPasted("");
     setOutput("");
     setTokens(null);
     setErr("");
@@ -153,53 +151,6 @@ export default function Home() {
       setTokens(data?.token_estimate ?? null);
       if (!ctx)
         setErr("URL converted, but output is empty. Try Paste mode below.");
-    } catch (e: any) {
-      setErr(e?.message || "Network error");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const submitText = async () => {
-    setErr("");
-    setOutput("");
-    setTokens(null);
-
-    if (pasted.trim().length < 20) {
-      setErr("Paste at least a paragraph (20+ characters).");
-      return;
-    }
-
-    if (!API_URL) {
-      setErr("Missing NEXT_PUBLIC_API_URL (Vercel env var).");
-      return;
-    }
-
-    setBusy(true);
-    try {
-      const form = new FormData();
-      form.append("raw_text", pasted.trim());
-
-      const res = await fetch(`${API_URL}/convert`, {
-        method: "POST",
-        body: form,
-      });
-
-      const data: any = await parseAny(res);
-
-      if (!res.ok) {
-        setErr(data?.error || `Request failed (${res.status})`);
-        return;
-      }
-      if (data?.error) {
-        setErr(data.error);
-        return;
-      }
-
-      const ctx = data?.context ?? "";
-      setOutput(ctx);
-      setTokens(data?.token_estimate ?? null);
-      if (!ctx) setErr("Converted, but output is empty.");
     } catch (e: any) {
       setErr(e?.message || "Network error");
     } finally {
@@ -378,103 +329,11 @@ export default function Home() {
         </div>
 
         <div style={{ fontSize: 13, color: "#475569", marginBottom: 12 }}>
-          Note: Some sites (e.g., Medium) block server-side fetching (403). If that
-          happens, use Paste mode below.
+          Note: Some sites (e.g., Medium) block server-side fetching (403). If that happens, try another source or we’ll add a browser extension import next.
+
         </div>
 
-        {/* Paste mode */}
-        <details
-          style={{
-            background: "#FFFFFF",
-            border: "1px solid #E2E8F0",
-            borderRadius: 12,
-            padding: 12,
-            marginBottom: 12,
-          }}
-        >
-          <summary
-            style={{
-              cursor: "pointer",
-              fontWeight: 800,
-              color: "#0F172A",
-            }}
-          >
-            Paste mode (for Medium / blocked sites)
-          </summary>
-
-          <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-            <textarea
-              value={pasted}
-              onChange={(e) => setPasted(e.target.value)}
-              disabled={busy}
-              rows={6}
-              placeholder="Paste article text here…"
-              style={{
-                width: "100%",
-                padding: 12,
-                borderRadius: 12,
-                border: "1px solid #E2E8F0",
-                background: "#FFFFFF",
-                fontFamily:
-                  "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
-                fontSize: 13,
-                lineHeight: 1.5,
-              }}
-            />
-
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                disabled={busy || pasted.trim().length < 20}
-                onClick={submitText}
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 12,
-                  border: "1px solid #0F172A",
-                  background:
-                    busy || pasted.trim().length < 20 ? "#E2E8F0" : "#0F172A",
-                  color:
-                    busy || pasted.trim().length < 20 ? "#334155" : "#FFFFFF",
-                  cursor:
-                    busy || pasted.trim().length < 20
-                      ? "not-allowed"
-                      : "pointer",
-                  fontWeight: 700,
-                }}
-              >
-                {busy ? "Converting…" : "Convert Text"}
-              </button>
-
-              <button
-                type="button"
-                disabled={busy || !pasted}
-                onClick={() => setPasted("")}
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 12,
-                  border: "1px solid #E2E8F0",
-                  background: "#FFFFFF",
-                  color: "#0F172A",
-                  cursor: busy ? "not-allowed" : "pointer",
-                  fontWeight: 700,
-                }}
-              >
-                Clear pasted text
-              </button>
-
-              <span
-                style={{
-                  fontSize: 13,
-                  color: "#475569",
-                  alignSelf: "center",
-                }}
-              >
-                Tip: paste at least a paragraph (20+ chars).
-              </span>
-            </div>
-          </div>
-        </details>
-
+        
         {/* PDF controls */}
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
           {/* Choose/Change control */}
@@ -520,7 +379,7 @@ export default function Home() {
               color: "#0F172A",
               cursor: busy ? "not-allowed" : "pointer",
               fontWeight: 600,
-              opacity: file || output || err || url || pasted ? 1 : 0.6,
+              opacity: file || output || err || url ? 1 : 0.6,
             }}
             title="Clear and start a new conversion"
           >
