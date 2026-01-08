@@ -5,6 +5,8 @@ import { useMemo, useRef, useState } from "react";
 export default function Home() {
   const API_URL = useMemo(() => process.env.NEXT_PUBLIC_API_URL, []);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  
+  const [url, setUrl] = useState("");
 
   const [file, setFile] = useState<File | null>(null);
 
@@ -212,6 +214,79 @@ export default function Home() {
             if (f) acceptFile(f);
           }}
         />
+
+		<div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+  <input
+    value={url}
+    onChange={(e) => setUrl(e.target.value)}
+    placeholder="Paste a web URL (https://...)"
+    style={{
+      flex: "1 1 420px",
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid #E2E8F0",
+      background: "#FFFFFF",
+      fontSize: 14,
+    }}
+  />
+  <button
+    type="button"
+    disabled={busy || !url.trim()}
+    onClick={async () => {
+      setErr("");
+      setOutput("");
+      setTokens(null);
+
+      const API_URL = process.env.NEXT_PUBLIC_API_URL;
+      if (!API_URL) {
+        setErr("Missing NEXT_PUBLIC_API_URL (Vercel env var).");
+        return;
+      }
+
+      setBusy(true);
+      try {
+        const form = new FormData();
+        form.append("url", url.trim());
+
+        const res = await fetch(`${API_URL}/convert_url`, { method: "POST", body: form });
+        const text = await res.text();
+        let data: any = {};
+        try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+        if (!res.ok) {
+          setErr(data?.error || `Request failed (${res.status})`);
+          return;
+        }
+        if (data?.error) {
+          setErr(data.error);
+          return;
+        }
+
+        const ctx = data?.context ?? "";
+        setOutput(ctx);
+        setTokens(data?.token_estimate ?? null);
+        if (!ctx) setErr("URL converted, but output is empty (page may block bots).");
+      } catch (e: any) {
+        setErr(e?.message || "Network error");
+      } finally {
+        setBusy(false);
+      }
+    }}
+    style={{
+      padding: "10px 14px",
+      borderRadius: 12,
+      border: "1px solid #0F172A",
+      background: busy || !url.trim() ? "#E2E8F0" : "#0F172A",
+      color: busy || !url.trim() ? "#334155" : "#FFFFFF",
+      cursor: busy || !url.trim() ? "not-allowed" : "pointer",
+      fontWeight: 700,
+    }}
+    title="Convert the web page into AI-ready context"
+  >
+    {busy ? "Converting…" : "Convert URL"}
+  </button>
+</div>
+
 
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
           {/* Choose/Change control */}
