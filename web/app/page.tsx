@@ -30,10 +30,9 @@ export default function Home() {
     }
   };
 
-  // ✅ Bookmarklet / extension future: accept imported text via postMessage
+  // ✅ Accept imported text via postMessage (from bookmarklet / future extension)
   useEffect(() => {
     const handler = async (event: MessageEvent) => {
-      // Accept only our specific message shape
       if (!event?.data || event.data.type !== "CONTEXTIFY_IMPORT") return;
 
       const text = String(event.data.text || "").trim();
@@ -96,7 +95,6 @@ export default function Home() {
     setErr("");
     setCopied(false);
 
-    // Allow selecting the same file again (important!)
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -248,8 +246,8 @@ export default function Home() {
   // 🔧 Update this if your production domain is different
   const WEB_APP_URL = "https://contextify-neon.vercel.app";
 
-  // Bookmarklet: open Contextify in a new tab and send selected text (or full body text)
-  const bookmarkletHref =
+  // ✅ Bookmarklet code (copy & paste into Chrome bookmark URL field)
+  const bookmarkletCode =
     "javascript:(()=>{try{const t=(window.getSelection&&window.getSelection().toString().trim())||document.body.innerText||'';const u='" +
     WEB_APP_URL +
     "/?import=1';const w=window.open(u,'_blank');setTimeout(()=>{try{w&&w.postMessage({type:'CONTEXTIFY_IMPORT',text:t},'*')}catch(e){}},1200);alert('Opening Contextify and sending text…');}catch(e){alert('Contextify Import failed: '+e);}})();";
@@ -394,24 +392,61 @@ export default function Home() {
           </button>
         </div>
 
+        {/* Bookmarklet (copy code) */}
         <div style={{ fontSize: 13, color: "#475569", marginBottom: 12 }}>
-          Note: Some sites (e.g., Medium) block server-side fetching (403).
-          <br />
-          Use the <strong>Contextify Import Bookmarklet</strong> for blocked sites:
-          <span style={{ marginLeft: 8 }}>
-            <a
-              href={bookmarkletHref}
-              style={{ color: "#1F3A5F", fontWeight: 800 }}
-              onClick={(e) => {
-                e.preventDefault();
+          Note: Some sites (e.g., Medium) block server-side fetching (403). Use the{" "}
+          <strong>Contextify Import Bookmarklet</strong>:
+          <div
+            style={{
+              marginTop: 8,
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <input
+              readOnly
+              value={bookmarkletCode}
+              disabled={busy}
+              style={{
+                flex: "1 1 520px",
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid #E2E8F0",
+                background: "#FFFFFF",
+                fontSize: 12,
+                fontFamily:
+                  "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
+              }}
+            />
+            <button
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                await navigator.clipboard.writeText(bookmarkletCode);
                 alert(
-                  "Drag this link to your bookmarks bar.\n\nThen open the article, (optionally select text), and click the bookmark."
+                  "Copied!\n\nChrome: create a new bookmark named 'Contextify Import' and paste this into the URL field."
                 );
               }}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 12,
+                border: "1px solid #0F172A",
+                background: busy ? "#E2E8F0" : "#0F172A",
+                color: busy ? "#334155" : "#FFFFFF",
+                cursor: busy ? "not-allowed" : "pointer",
+                fontWeight: 800,
+              }}
+              title="Copy bookmarklet code"
             >
-              Contextify Import
-            </a>
-          </span>
+              Copy
+            </button>
+          </div>
+          <div style={{ marginTop: 6 }}>
+            How to install: Chrome ⭐ (Bookmark) → Edit → paste into{" "}
+            <strong>URL</strong>. Then open the article and click your bookmark.
+          </div>
         </div>
 
         {/* PDF controls */}
@@ -490,7 +525,7 @@ export default function Home() {
             {busy ? "Converting…" : "Convert PDF"}
           </button>
 
-          {/* Copy */}
+          {/* Copy output */}
           <button
             onClick={copy}
             disabled={!output || busy}
