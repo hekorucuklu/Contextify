@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 import uuid
 
+from web_import import fetch_readable_text
 from parser import parse_pdf, parse_text
 from formatter import build_context
 from tokens import estimate_tokens
@@ -49,4 +50,20 @@ async def convert(
     context = build_context(content)
     tokens = estimate_tokens(context)
 
+    return {"id": str(uuid.uuid4()), "context": context, "token_estimate": tokens}
+    
+@app.post("/convert_url")
+async def convert_url(
+    url: str = Form(...),
+):
+    try:
+        content = fetch_readable_text(url)
+    except Exception as e:
+        return {"error": str(e)}
+
+    if len(content) > 20000:
+        return {"error": "Free limit exceeded (content too large)"}
+
+    context = build_context(content)
+    tokens = estimate_tokens(context)
     return {"id": str(uuid.uuid4()), "context": context, "token_estimate": tokens}
