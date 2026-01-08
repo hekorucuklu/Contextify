@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export default function Home() {
   const API_URL = useMemo(() => process.env.NEXT_PUBLIC_API_URL, []);
@@ -29,6 +29,64 @@ export default function Home() {
       return { raw: text };
     }
   };
+
+  // ✅ Bookmarklet / extension future: accept imported text via postMessage
+  useEffect(() => {
+    const handler = async (event: MessageEvent) => {
+      // Accept only our specific message shape
+      if (!event?.data || event.data.type !== "CONTEXTIFY_IMPORT") return;
+
+      const text = String(event.data.text || "").trim();
+      if (text.length < 50) {
+        setErr("Imported text is too short. Select more content and try again.");
+        return;
+      }
+
+      if (!API_URL) {
+        setErr("Missing NEXT_PUBLIC_API_URL (Vercel env var).");
+        return;
+      }
+
+      setErr("");
+      setOutput("");
+      setTokens(null);
+      setCopied(false);
+
+      setBusy(true);
+      try {
+        const form = new FormData();
+        form.append("raw_text", text);
+
+        const res = await fetch(`${API_URL}/convert`, {
+          method: "POST",
+          body: form,
+        });
+
+        const data: any = await parseAny(res);
+
+        if (!res.ok) {
+          setErr(data?.error || `Request failed (${res.status})`);
+          return;
+        }
+        if (data?.error) {
+          setErr(data.error);
+          return;
+        }
+
+        const ctx = data?.context ?? "";
+        setOutput(ctx);
+        setTokens(data?.token_estimate ?? null);
+        if (!ctx) setErr("Imported successfully, but output is empty.");
+      } catch (e: any) {
+        setErr(e?.message || "Network error");
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [API_URL]);
 
   const resetForNext = () => {
     setFile(null);
@@ -103,9 +161,7 @@ export default function Home() {
       setTokens(data?.token_estimate ?? null);
 
       if (!ctx)
-        setErr(
-          "API returned success, but the output is empty (try another PDF)."
-        );
+        setErr("API returned success, but the output is empty (try another PDF).");
     } catch (e: any) {
       setErr(e?.message || "Network error");
     } finally {
@@ -149,8 +205,7 @@ export default function Home() {
       const ctx = data?.context ?? "";
       setOutput(ctx);
       setTokens(data?.token_estimate ?? null);
-      if (!ctx)
-        setErr("URL converted, but output is empty. Try Paste mode below.");
+      if (!ctx) setErr("URL converted, but output is empty.");
     } catch (e: any) {
       setErr(e?.message || "Network error");
     } finally {
@@ -190,14 +245,22 @@ export default function Home() {
     ? "Tip: You can change the file anytime."
     : "Tip: Drag & drop a PDF anywhere in this card.";
 
+  // 🔧 Update this if your production domain is different
+  const WEB_APP_URL = "https://contextify-neon.vercel.app";
+
+  // Bookmarklet: open Contextify in a new tab and send selected text (or full body text)
+  const bookmarkletHref =
+    "javascript:(()=>{try{const t=(window.getSelection&&window.getSelection().toString().trim())||document.body.innerText||'';const u='" +
+    WEB_APP_URL +
+    "/?import=1';const w=window.open(u,'_blank');setTimeout(()=>{try{w&&w.postMessage({type:'CONTEXTIFY_IMPORT',text:t},'*')}catch(e){}},1200);alert('Opening Contextify and sending text…');}catch(e){alert('Contextify Import failed: '+e);}})();";
+
   return (
     <main
       style={{
         maxWidth: 980,
         margin: "48px auto",
         padding: 20,
-        fontFamily:
-          "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial",
+        fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial",
         color: "#0F172A",
       }}
     >
@@ -228,7 +291,10 @@ export default function Home() {
           }}
           onClick={(e) => {
             e.preventDefault();
-            window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+            window.scrollTo({
+              top: document.body.scrollHeight,
+              behavior: "smooth",
+            });
           }}
         >
           Privacy & limits ↓
@@ -329,13 +395,34 @@ export default function Home() {
         </div>
 
         <div style={{ fontSize: 13, color: "#475569", marginBottom: 12 }}>
-          Note: Some sites (e.g., Medium) block server-side fetching (403). If that happens, try another source or we’ll add a browser extension import next.
-
+          Note: Some sites (e.g., Medium) block server-side fetching (403).
+          <br />
+          Use the <strong>Contextify Import Bookmarklet</strong> for blocked sites:
+          <span style={{ marginLeft: 8 }}>
+            <a
+              href={bookmarkletHref}
+              style={{ color: "#1F3A5F", fontWeight: 800 }}
+              onClick={(e) => {
+                e.preventDefault();
+                alert(
+                  "Drag this link to your bookmarks bar.\n\nThen open the article, (optionally select text), and click the bookmark."
+                );
+              }}
+            >
+              Contextify Import
+            </a>
+          </span>
         </div>
 
-        
         {/* PDF controls */}
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
           {/* Choose/Change control */}
           <button
             type="button"
@@ -484,7 +571,12 @@ export default function Home() {
       {/* Footer */}
       <div
         id="privacy"
-        style={{ marginTop: 18, color: "#475569", fontSize: 13, lineHeight: 1.6 }}
+        style={{
+          marginTop: 18,
+          color: "#475569",
+          fontSize: 13,
+          lineHeight: 1.6,
+        }}
       >
         <p style={{ margin: 0 }}>
           <strong style={{ color: "#0F172A" }}>Privacy:</strong> Files are processed
