@@ -5,8 +5,9 @@ import { useMemo, useRef, useState } from "react";
 export default function Home() {
   const API_URL = useMemo(() => process.env.NEXT_PUBLIC_API_URL, []);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  
+
   const [url, setUrl] = useState("");
+  const [pasted, setPasted] = useState("");
 
   const [file, setFile] = useState<File | null>(null);
 
@@ -21,8 +22,19 @@ export default function Home() {
 
   const openPicker = () => fileInputRef.current?.click();
 
+  const parseAny = async (res: Response) => {
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { raw: text };
+    }
+  };
+
   const resetForNext = () => {
     setFile(null);
+    setUrl("");
+    setPasted("");
     setOutput("");
     setTokens(null);
     setErr("");
@@ -51,7 +63,7 @@ export default function Home() {
     setFile(f);
   };
 
-  const submit = async () => {
+  const submitPdf = async () => {
     setErr("");
     setOutput("");
     setTokens(null);
@@ -71,15 +83,12 @@ export default function Home() {
       const form = new FormData();
       form.append("file", file);
 
-      const res = await fetch(`${API_URL}/convert`, { method: "POST", body: form });
+      const res = await fetch(`${API_URL}/convert`, {
+        method: "POST",
+        body: form,
+      });
 
-      const text = await res.text();
-      let data: any = {};
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = { raw: text };
-      }
+      const data: any = await parseAny(res);
 
       if (!res.ok) {
         setErr(data?.error || `Request failed (${res.status})`);
@@ -95,7 +104,102 @@ export default function Home() {
       setOutput(ctx);
       setTokens(data?.token_estimate ?? null);
 
-      if (!ctx) setErr("API returned success, but the output is empty (try another PDF).");
+      if (!ctx)
+        setErr(
+          "API returned success, but the output is empty (try another PDF)."
+        );
+    } catch (e: any) {
+      setErr(e?.message || "Network error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitUrl = async () => {
+    setErr("");
+    setOutput("");
+    setTokens(null);
+
+    if (!url.trim()) return;
+
+    if (!API_URL) {
+      setErr("Missing NEXT_PUBLIC_API_URL (Vercel env var).");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("url", url.trim());
+
+      const res = await fetch(`${API_URL}/convert_url`, {
+        method: "POST",
+        body: form,
+      });
+
+      const data: any = await parseAny(res);
+
+      if (!res.ok) {
+        setErr(data?.error || `Request failed (${res.status})`);
+        return;
+      }
+      if (data?.error) {
+        setErr(data.error);
+        return;
+      }
+
+      const ctx = data?.context ?? "";
+      setOutput(ctx);
+      setTokens(data?.token_estimate ?? null);
+      if (!ctx)
+        setErr("URL converted, but output is empty. Try Paste mode below.");
+    } catch (e: any) {
+      setErr(e?.message || "Network error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitText = async () => {
+    setErr("");
+    setOutput("");
+    setTokens(null);
+
+    if (pasted.trim().length < 20) {
+      setErr("Paste at least a paragraph (20+ characters).");
+      return;
+    }
+
+    if (!API_URL) {
+      setErr("Missing NEXT_PUBLIC_API_URL (Vercel env var).");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("raw_text", pasted.trim());
+
+      const res = await fetch(`${API_URL}/convert`, {
+        method: "POST",
+        body: form,
+      });
+
+      const data: any = await parseAny(res);
+
+      if (!res.ok) {
+        setErr(data?.error || `Request failed (${res.status})`);
+        return;
+      }
+      if (data?.error) {
+        setErr(data.error);
+        return;
+      }
+
+      const ctx = data?.context ?? "";
+      setOutput(ctx);
+      setTokens(data?.token_estimate ?? null);
+      if (!ctx) setErr("Converted, but output is empty.");
     } catch (e: any) {
       setErr(e?.message || "Network error");
     } finally {
@@ -131,7 +235,6 @@ export default function Home() {
     if (f) acceptFile(f);
   };
 
-  const fileLabel = file ? file.name : "Choose PDF (or drag & drop)";
   const helperText = file
     ? "Tip: You can change the file anytime."
     : "Tip: Drag & drop a PDF anywhere in this card.";
@@ -142,19 +245,36 @@ export default function Home() {
         maxWidth: 980,
         margin: "48px auto",
         padding: 20,
-        fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial",
+        fontFamily:
+          "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial",
         color: "#0F172A",
       }}
     >
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
         <div>
-          <h1 style={{ fontSize: 40, margin: 0, letterSpacing: -0.5 }}>Contextify</h1>
-          <p style={{ margin: "6px 0 0 0", color: "#475569" }}>Make any document AI-ready</p>
+          <h1 style={{ fontSize: 40, margin: 0, letterSpacing: -0.5 }}>
+            Contextify
+          </h1>
+          <p style={{ margin: "6px 0 0 0", color: "#475569" }}>
+            Make any document AI-ready
+          </p>
         </div>
         <a
           href="#"
-          style={{ textDecoration: "none", color: "#1F3A5F", fontSize: 14, opacity: 0.9 }}
+          style={{
+            textDecoration: "none",
+            color: "#1F3A5F",
+            fontSize: 14,
+            opacity: 0.9,
+          }}
           onClick={(e) => {
             e.preventDefault();
             window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
@@ -215,79 +335,147 @@ export default function Home() {
           }}
         />
 
-		<div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-  <input
-    value={url}
-    onChange={(e) => setUrl(e.target.value)}
-    placeholder="Paste a web URL (https://...)"
-    style={{
-      flex: "1 1 420px",
-      padding: "10px 12px",
-      borderRadius: 12,
-      border: "1px solid #E2E8F0",
-      background: "#FFFFFF",
-      fontSize: 14,
-    }}
-  />
-  <button
-    type="button"
-    disabled={busy || !url.trim()}
-    onClick={async () => {
-      setErr("");
-      setOutput("");
-      setTokens(null);
+        {/* URL row */}
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            marginBottom: 10,
+          }}
+        >
+          <input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="Paste a web URL (https://...)"
+            disabled={busy}
+            style={{
+              flex: "1 1 420px",
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid #E2E8F0",
+              background: "#FFFFFF",
+              fontSize: 14,
+            }}
+          />
+          <button
+            type="button"
+            disabled={busy || !url.trim()}
+            onClick={submitUrl}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "1px solid #0F172A",
+              background: busy || !url.trim() ? "#E2E8F0" : "#0F172A",
+              color: busy || !url.trim() ? "#334155" : "#FFFFFF",
+              cursor: busy || !url.trim() ? "not-allowed" : "pointer",
+              fontWeight: 700,
+            }}
+            title="Convert the web page into AI-ready context"
+          >
+            {busy ? "Converting…" : "Convert URL"}
+          </button>
+        </div>
 
-      const API_URL = process.env.NEXT_PUBLIC_API_URL;
-      if (!API_URL) {
-        setErr("Missing NEXT_PUBLIC_API_URL (Vercel env var).");
-        return;
-      }
+        <div style={{ fontSize: 13, color: "#475569", marginBottom: 12 }}>
+          Note: Some sites (e.g., Medium) block server-side fetching (403). If that
+          happens, use Paste mode below.
+        </div>
 
-      setBusy(true);
-      try {
-        const form = new FormData();
-        form.append("url", url.trim());
+        {/* Paste mode */}
+        <details
+          style={{
+            background: "#FFFFFF",
+            border: "1px solid #E2E8F0",
+            borderRadius: 12,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
+          <summary
+            style={{
+              cursor: "pointer",
+              fontWeight: 800,
+              color: "#0F172A",
+            }}
+          >
+            Paste mode (for Medium / blocked sites)
+          </summary>
 
-        const res = await fetch(`${API_URL}/convert_url`, { method: "POST", body: form });
-        const text = await res.text();
-        let data: any = {};
-        try { data = JSON.parse(text); } catch { data = { raw: text }; }
+          <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+            <textarea
+              value={pasted}
+              onChange={(e) => setPasted(e.target.value)}
+              disabled={busy}
+              rows={6}
+              placeholder="Paste article text here…"
+              style={{
+                width: "100%",
+                padding: 12,
+                borderRadius: 12,
+                border: "1px solid #E2E8F0",
+                background: "#FFFFFF",
+                fontFamily:
+                  "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            />
 
-        if (!res.ok) {
-          setErr(data?.error || `Request failed (${res.status})`);
-          return;
-        }
-        if (data?.error) {
-          setErr(data.error);
-          return;
-        }
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={busy || pasted.trim().length < 20}
+                onClick={submitText}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 12,
+                  border: "1px solid #0F172A",
+                  background:
+                    busy || pasted.trim().length < 20 ? "#E2E8F0" : "#0F172A",
+                  color:
+                    busy || pasted.trim().length < 20 ? "#334155" : "#FFFFFF",
+                  cursor:
+                    busy || pasted.trim().length < 20
+                      ? "not-allowed"
+                      : "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                {busy ? "Converting…" : "Convert Text"}
+              </button>
 
-        const ctx = data?.context ?? "";
-        setOutput(ctx);
-        setTokens(data?.token_estimate ?? null);
-        if (!ctx) setErr("URL converted, but output is empty (page may block bots).");
-      } catch (e: any) {
-        setErr(e?.message || "Network error");
-      } finally {
-        setBusy(false);
-      }
-    }}
-    style={{
-      padding: "10px 14px",
-      borderRadius: 12,
-      border: "1px solid #0F172A",
-      background: busy || !url.trim() ? "#E2E8F0" : "#0F172A",
-      color: busy || !url.trim() ? "#334155" : "#FFFFFF",
-      cursor: busy || !url.trim() ? "not-allowed" : "pointer",
-      fontWeight: 700,
-    }}
-    title="Convert the web page into AI-ready context"
-  >
-    {busy ? "Converting…" : "Convert URL"}
-  </button>
-</div>
+              <button
+                type="button"
+                disabled={busy || !pasted}
+                onClick={() => setPasted("")}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 12,
+                  border: "1px solid #E2E8F0",
+                  background: "#FFFFFF",
+                  color: "#0F172A",
+                  cursor: busy ? "not-allowed" : "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                Clear pasted text
+              </button>
 
+              <span
+                style={{
+                  fontSize: 13,
+                  color: "#475569",
+                  alignSelf: "center",
+                }}
+              >
+                Tip: paste at least a paragraph (20+ chars).
+              </span>
+            </div>
+          </div>
+        </details>
 
+        {/* PDF controls */}
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
           {/* Choose/Change control */}
           <button
@@ -309,15 +497,21 @@ export default function Home() {
             title="Choose a PDF file"
           >
             {file ? "Change PDF:" : "Choose PDF"}
-            <span style={{ fontWeight: 600, color: "#334155" }}>{file ? file.name : ""}</span>
-            {!file && <span style={{ fontWeight: 600, color: "#475569" }}>(or drag & drop)</span>}
+            <span style={{ fontWeight: 600, color: "#334155" }}>
+              {file ? file.name : ""}
+            </span>
+            {!file && (
+              <span style={{ fontWeight: 600, color: "#475569" }}>
+                (or drag & drop)
+              </span>
+            )}
           </button>
 
-          {/* Clear / New */}
+          {/* New / Clear */}
           <button
             type="button"
             onClick={resetForNext}
-            disabled={busy && !file}
+            disabled={busy}
             style={{
               padding: "10px 14px",
               borderRadius: 12,
@@ -326,16 +520,16 @@ export default function Home() {
               color: "#0F172A",
               cursor: busy ? "not-allowed" : "pointer",
               fontWeight: 600,
-              opacity: file || output || err ? 1 : 0.6,
+              opacity: file || output || err || url || pasted ? 1 : 0.6,
             }}
             title="Clear and start a new conversion"
           >
             New / Clear
           </button>
 
-          {/* Convert */}
+          {/* Convert PDF */}
           <button
-            onClick={submit}
+            onClick={submitPdf}
             disabled={busy || !file}
             style={{
               padding: "10px 14px",
@@ -347,7 +541,7 @@ export default function Home() {
               fontWeight: 600,
             }}
           >
-            {busy ? "Converting…" : "Convert"}
+            {busy ? "Converting…" : "Convert PDF"}
           </button>
 
           {/* Copy */}
@@ -386,7 +580,9 @@ export default function Home() {
           )}
         </div>
 
-        <div style={{ marginTop: 10, fontSize: 13, color: "#475569" }}>{helperText}</div>
+        <div style={{ marginTop: 10, fontSize: 13, color: "#475569" }}>
+          {helperText}
+        </div>
 
         {err && (
           <div
@@ -417,7 +613,8 @@ export default function Home() {
             borderRadius: 16,
             border: "1px solid #E2E8F0",
             background: "#FFFFFF",
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
+            fontFamily:
+              "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
             fontSize: 13,
             lineHeight: 1.5,
             color: "#0F172A",
@@ -426,12 +623,17 @@ export default function Home() {
       </div>
 
       {/* Footer */}
-      <div id="privacy" style={{ marginTop: 18, color: "#475569", fontSize: 13, lineHeight: 1.6 }}>
+      <div
+        id="privacy"
+        style={{ marginTop: 18, color: "#475569", fontSize: 13, lineHeight: 1.6 }}
+      >
         <p style={{ margin: 0 }}>
-          <strong style={{ color: "#0F172A" }}>Privacy:</strong> Files are processed on-demand and not stored.
+          <strong style={{ color: "#0F172A" }}>Privacy:</strong> Files are processed
+          on-demand and not stored.
         </p>
         <p style={{ margin: "6px 0 0 0" }}>
-          <strong style={{ color: "#0F172A" }}>MVP limits:</strong> 5MB per PDF and output capped (free safety limit).
+          <strong style={{ color: "#0F172A" }}>MVP limits:</strong> 5MB per PDF and
+          output capped (free safety limit).
         </p>
       </div>
     </main>
