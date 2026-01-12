@@ -160,9 +160,10 @@ export default function Home() {
 
   // ✅ Bookmarklet code (copy & paste into Chrome bookmark URL field)
   const bookmarkletCode =
-    "javascript:(()=>{try{const t=(window.getSelection&&window.getSelection().toString().trim())||document.body.innerText||'';const u='" +
-    WEB_APP_URL +
-    "/?import=1';const w=window.open(u,'_blank');setTimeout(()=>{try{w&&w.postMessage({type:'CONTEXTIFY_IMPORT',text:t},'*')}catch(e){}},1200);alert('Opening Contextify and sending text…');}catch(e){alert('Contextify Import failed: '+e);}})();";
+	  "javascript:(()=>{try{const pick=()=>{const a=document.querySelector('article');if(a&&a.innerText&&a.innerText.trim().length>200)return a.innerText;const main=document.querySelector('main');if(main&&main.innerText&&main.innerText.trim().length>200)return main.innerText;const c=document.querySelector('[data-testid=\"post-content\"],[role=\"article\"]');if(c&&c.innerText&&c.innerText.trim().length>200)return c.innerText;return (document.body&&document.body.innerText)||'';};const t=((window.getSelection&&window.getSelection().toString().trim())||'');const text=(t&&t.length>200)?t:pick();const u='" +
+	  WEB_APP_URL +
+	  "/?import=1';const w=window.open(u,'_blank');setTimeout(()=>{try{w&&w.postMessage({type:'CONTEXTIFY_IMPORT',text:text},'*')}catch(e){}},1200);alert('Opening Contextify and sending text…');}catch(e){alert('Contextify Import failed: '+e);}})();";
+
 
   const addBookmarklet = async () => {
     try {
