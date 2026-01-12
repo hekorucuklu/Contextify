@@ -7,7 +7,6 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [url, setUrl] = useState("");
-
   const [file, setFile] = useState<File | null>(null);
 
   const [output, setOutput] = useState("");
@@ -18,6 +17,12 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
 
   const [dragOver, setDragOver] = useState(false);
+
+  // 🔧 Update this if your production domain is different
+  const WEB_APP_URL = "https://contextify-neon.vercel.app";
+
+  // Client-side cap to prevent UI freezes on massive pages
+  const MAX_IMPORT_CHARS = 120_000;
 
   const openPicker = () => fileInputRef.current?.click();
 
@@ -30,62 +35,14 @@ export default function Home() {
     }
   };
 
-  // ✅ Accept imported text via postMessage (from bookmarklet / future extension)
-  useEffect(() => {
-    const handler = async (event: MessageEvent) => {
-      if (!event?.data || event.data.type !== "CONTEXTIFY_IMPORT") return;
-
-      const text = String(event.data.text || "").trim();
-      if (text.length < 50) {
-        setErr("Imported text is too short. Select more content and try again.");
-        return;
-      }
-
-      if (!API_URL) {
-        setErr("Missing NEXT_PUBLIC_API_URL (Vercel env var).");
-        return;
-      }
-
-      setErr("");
-      setOutput("");
-      setTokens(null);
-      setCopied(false);
-
-      setBusy(true);
-      try {
-        const form = new FormData();
-        form.append("raw_text", text);
-
-        const res = await fetch(`${API_URL}/convert`, {
-          method: "POST",
-          body: form,
-        });
-
-        const data: any = await parseAny(res);
-
-        if (!res.ok) {
-          setErr(data?.error || `Request failed (${res.status})`);
-          return;
-        }
-        if (data?.error) {
-          setErr(data.error);
-          return;
-        }
-
-        const ctx = data?.context ?? "";
-        setOutput(ctx);
-        setTokens(data?.token_estimate ?? null);
-        if (!ctx) setErr("Imported successfully, but output is empty.");
-      } catch (e: any) {
-        setErr(e?.message || "Network error");
-      } finally {
-        setBusy(false);
-      }
-    };
-
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, [API_URL]);
+  const normalizeErr = (data: any, res?: Response) => {
+    return (
+      data?.error ||
+      data?.detail ||
+      data?.message ||
+      (res ? `Request failed (${res.status})` : "Unknown error")
+    );
+  };
 
   const resetForNext = () => {
     setFile(null);
@@ -137,20 +94,12 @@ export default function Home() {
       const form = new FormData();
       form.append("file", file);
 
-      const res = await fetch(`${API_URL}/convert`, {
-        method: "POST",
-        body: form,
-      });
-
+      const res = await fetch(`${API_URL}/convert`, { method: "POST", body: form });
       const data: any = await parseAny(res);
 
-      if (!res.ok) {
-        setErr(data?.error || `Request failed (${res.status})`);
-        return;
-      }
-
-      if (data?.error) {
-        setErr(data.error);
+      // Handle both "proper" HTTP errors and legacy "200 + {error}"
+      if (!res.ok || data?.error || data?.detail) {
+        setErr(normalizeErr(data, res));
         return;
       }
 
@@ -158,8 +107,7 @@ export default function Home() {
       setOutput(ctx);
       setTokens(data?.token_estimate ?? null);
 
-      if (!ctx)
-        setErr("API returned success, but the output is empty (try another PDF).");
+      if (!ctx) setErr("API returned success, but the output is empty (try another PDF).");
     } catch (e: any) {
       setErr(e?.message || "Network error");
     } finally {
@@ -184,19 +132,11 @@ export default function Home() {
       const form = new FormData();
       form.append("url", url.trim());
 
-      const res = await fetch(`${API_URL}/convert_url`, {
-        method: "POST",
-        body: form,
-      });
-
+      const res = await fetch(`${API_URL}/convert_url`, { method: "POST", body: form });
       const data: any = await parseAny(res);
 
-      if (!res.ok) {
-        setErr(data?.error || `Request failed (${res.status})`);
-        return;
-      }
-      if (data?.error) {
-        setErr(data.error);
+      if (!res.ok || data?.error || data?.detail) {
+        setErr(normalizeErr(data, res));
         return;
       }
 
@@ -211,12 +151,89 @@ export default function Home() {
     }
   };
 
-  const copy = async () => {
+  const copyOutput = async () => {
     if (!output) return;
     await navigator.clipboard.writeText(output);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
   };
+
+  // ✅ Bookmarklet code (copy & paste into Chrome bookmark URL field)
+  const bookmarkletCode =
+    "javascript:(()=>{try{const t=(window.getSelection&&window.getSelection().toString().trim())||document.body.innerText||'';const u='" +
+    WEB_APP_URL +
+    "/?import=1';const w=window.open(u,'_blank');setTimeout(()=>{try{w&&w.postMessage({type:'CONTEXTIFY_IMPORT',text:t},'*')}catch(e){}},1200);alert('Opening Contextify and sending text…');}catch(e){alert('Contextify Import failed: '+e);}})();";
+
+  const addBookmarklet = async () => {
+    try {
+      await navigator.clipboard.writeText(bookmarkletCode);
+      alert(
+        "Bookmarklet copied ✅\n\nInstall (Chrome):\n1) Press Ctrl+Shift+O\n2) ⋮ menu → Add new bookmark\n3) Name: Contextify Import\n4) Paste into URL field\n\nUse: Open an article (optional select text) → click bookmark."
+      );
+    } catch {
+      alert("Could not copy automatically. Please copy the bookmarklet code manually.");
+    }
+  };
+
+  // ✅ Accept imported text via postMessage (from bookmarklet / future extension)
+  useEffect(() => {
+    const handler = async (event: MessageEvent) => {
+      if (!event?.data || event.data.type !== "CONTEXTIFY_IMPORT") return;
+
+      let text = String(event.data.text || "").trim();
+
+      if (text.length < 50) {
+        setErr("Imported text is too short. Select more content and try again.");
+        return;
+      }
+
+      // Prevent UI freezes on extremely large imports
+      if (text.length > MAX_IMPORT_CHARS) {
+        text = text.slice(0, MAX_IMPORT_CHARS);
+        // Non-blocking hint (do not overwrite an existing error)
+        setErr(
+          `Imported text was very long, so we truncated it to ${MAX_IMPORT_CHARS.toLocaleString()} characters (free safety cap).`
+        );
+      } else {
+        setErr("");
+      }
+
+      if (!API_URL) {
+        setErr("Missing NEXT_PUBLIC_API_URL (Vercel env var).");
+        return;
+      }
+
+      setOutput("");
+      setTokens(null);
+      setCopied(false);
+
+      setBusy(true);
+      try {
+        const form = new FormData();
+        form.append("raw_text", text);
+
+        const res = await fetch(`${API_URL}/convert`, { method: "POST", body: form });
+        const data: any = await parseAny(res);
+
+        if (!res.ok || data?.error || data?.detail) {
+          setErr(normalizeErr(data, res));
+          return;
+        }
+
+        const ctx = data?.context ?? "";
+        setOutput(ctx);
+        setTokens(data?.token_estimate ?? null);
+        if (!ctx) setErr("Imported successfully, but output is empty.");
+      } catch (e: any) {
+        setErr(e?.message || "Network error");
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [API_URL]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Drag & Drop handlers
   const onDragOver = (e: React.DragEvent) => {
@@ -243,15 +260,6 @@ export default function Home() {
     ? "Tip: You can change the file anytime."
     : "Tip: Drag & drop a PDF anywhere in this card.";
 
-  // 🔧 Update this if your production domain is different
-  const WEB_APP_URL = "https://contextify-neon.vercel.app";
-
-  // ✅ Bookmarklet code (copy & paste into Chrome bookmark URL field)
-  const bookmarkletCode =
-    "javascript:(()=>{try{const t=(window.getSelection&&window.getSelection().toString().trim())||document.body.innerText||'';const u='" +
-    WEB_APP_URL +
-    "/?import=1';const w=window.open(u,'_blank');setTimeout(()=>{try{w&&w.postMessage({type:'CONTEXTIFY_IMPORT',text:t},'*')}catch(e){}},1200);alert('Opening Contextify and sending text…');}catch(e){alert('Contextify Import failed: '+e);}})();";
-
   return (
     <main
       style={{
@@ -263,36 +271,17 @@ export default function Home() {
       }}
     >
       {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          gap: 12,
-        }}
-      >
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
         <div>
-          <h1 style={{ fontSize: 40, margin: 0, letterSpacing: -0.5 }}>
-            Contextify
-          </h1>
-          <p style={{ margin: "6px 0 0 0", color: "#475569" }}>
-            Make any document AI-ready
-          </p>
+          <h1 style={{ fontSize: 40, margin: 0, letterSpacing: -0.5 }}>Contextify</h1>
+          <p style={{ margin: "6px 0 0 0", color: "#475569" }}>Make any document AI-ready</p>
         </div>
         <a
           href="#"
-          style={{
-            textDecoration: "none",
-            color: "#1F3A5F",
-            fontSize: 14,
-            opacity: 0.9,
-          }}
+          style={{ textDecoration: "none", color: "#1F3A5F", fontSize: 14, opacity: 0.9 }}
           onClick={(e) => {
             e.preventDefault();
-            window.scrollTo({
-              top: document.body.scrollHeight,
-              behavior: "smooth",
-            });
+            window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
           }}
         >
           Privacy & limits ↓
@@ -351,14 +340,7 @@ export default function Home() {
         />
 
         {/* URL row */}
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            flexWrap: "wrap",
-            marginBottom: 10,
-          }}
-        >
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -392,43 +374,14 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Bookmarklet (copy code) */}
+        {/* Bookmarklet */}
         <div style={{ fontSize: 13, color: "#475569", marginBottom: 12 }}>
-          Note: Some sites (e.g., Medium) block server-side fetching (403). Use the{" "}
-          <strong>Contextify Import Bookmarklet</strong>:
-          <div
-            style={{
-              marginTop: 8,
-              display: "flex",
-              gap: 10,
-              alignItems: "center",
-              flexWrap: "wrap",
-            }}
-          >
-            <input
-              readOnly
-              value={bookmarkletCode}
-              disabled={busy}
-              style={{
-                flex: "1 1 520px",
-                padding: "10px 12px",
-                borderRadius: 12,
-                border: "1px solid #E2E8F0",
-                background: "#FFFFFF",
-                fontSize: 12,
-                fontFamily:
-                  "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
-              }}
-            />
+          Blocked sites (e.g., Medium)? Install the <strong>Contextify Bookmarklet</strong>.
+          <div style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <button
               type="button"
               disabled={busy}
-              onClick={async () => {
-                await navigator.clipboard.writeText(bookmarkletCode);
-                alert(
-                  "Copied!\n\nChrome: create a new bookmark named 'Contextify Import' and paste this into the URL field."
-                );
-              }}
+              onClick={addBookmarklet}
               style={{
                 padding: "10px 14px",
                 borderRadius: 12,
@@ -438,27 +391,19 @@ export default function Home() {
                 cursor: busy ? "not-allowed" : "pointer",
                 fontWeight: 800,
               }}
-              title="Copy bookmarklet code"
+              title="Copies bookmarklet code + shows install steps"
             >
-              Copy
+              Add Bookmarklet
             </button>
-          </div>
-          <div style={{ marginTop: 6 }}>
-            How to install: Chrome ⭐ (Bookmark) → Edit → paste into{" "}
-            <strong>URL</strong>. Then open the article and click your bookmark.
+
+            <span style={{ fontSize: 12, color: "#64748B" }}>
+              Copies code to clipboard + shows install steps
+            </span>
           </div>
         </div>
 
         {/* PDF controls */}
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            gap: 12,
-          }}
-        >
-          {/* Choose/Change control */}
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
           <button
             type="button"
             onClick={openPicker}
@@ -478,17 +423,10 @@ export default function Home() {
             title="Choose a PDF file"
           >
             {file ? "Change PDF:" : "Choose PDF"}
-            <span style={{ fontWeight: 600, color: "#334155" }}>
-              {file ? file.name : ""}
-            </span>
-            {!file && (
-              <span style={{ fontWeight: 600, color: "#475569" }}>
-                (or drag & drop)
-              </span>
-            )}
+            <span style={{ fontWeight: 600, color: "#334155" }}>{file ? file.name : ""}</span>
+            {!file && <span style={{ fontWeight: 600, color: "#475569" }}>(or drag & drop)</span>}
           </button>
 
-          {/* New / Clear */}
           <button
             type="button"
             onClick={resetForNext}
@@ -508,7 +446,6 @@ export default function Home() {
             New / Clear
           </button>
 
-          {/* Convert PDF */}
           <button
             onClick={submitPdf}
             disabled={busy || !file}
@@ -525,9 +462,8 @@ export default function Home() {
             {busy ? "Converting…" : "Convert PDF"}
           </button>
 
-          {/* Copy output */}
           <button
-            onClick={copy}
+            onClick={copyOutput}
             disabled={!output || busy}
             style={{
               padding: "10px 14px",
@@ -561,9 +497,7 @@ export default function Home() {
           )}
         </div>
 
-        <div style={{ marginTop: 10, fontSize: 13, color: "#475569" }}>
-          {helperText}
-        </div>
+        <div style={{ marginTop: 10, fontSize: 13, color: "#475569" }}>{helperText}</div>
 
         {err && (
           <div
@@ -604,22 +538,12 @@ export default function Home() {
       </div>
 
       {/* Footer */}
-      <div
-        id="privacy"
-        style={{
-          marginTop: 18,
-          color: "#475569",
-          fontSize: 13,
-          lineHeight: 1.6,
-        }}
-      >
+      <div id="privacy" style={{ marginTop: 18, color: "#475569", fontSize: 13, lineHeight: 1.6 }}>
         <p style={{ margin: 0 }}>
-          <strong style={{ color: "#0F172A" }}>Privacy:</strong> Files are processed
-          on-demand and not stored.
+          <strong style={{ color: "#0F172A" }}>Privacy:</strong> Files are processed on-demand and not stored.
         </p>
         <p style={{ margin: "6px 0 0 0" }}>
-          <strong style={{ color: "#0F172A" }}>MVP limits:</strong> 5MB per PDF and
-          output capped (free safety limit).
+          <strong style={{ color: "#0F172A" }}>MVP limits:</strong> Up to <strong>5MB</strong> per PDF. Very long documents may exceed the free <strong>content cap</strong> even below 5MB.
         </p>
       </div>
     </main>
