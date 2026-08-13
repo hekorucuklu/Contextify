@@ -1,0 +1,32 @@
+{
+  "features": [
+    {"key":"football.prematch.away_days_since_previous_match.v1","status":"active"},
+    {"key":"football.prematch.away_elo_pre.v1","status":"active"},
+    {"key":"football.prematch.away_first10_goal_rate_last5.v1","status":"active"},
+    {"key":"football.prematch.away_first10_xg_for_per_match_last5.v1","status":"active"},
+    {"key":"football.prematch.away_goal_diff_per_match_last5.v1","status":"active"},
+    {"key":"football.prematch.away_history_depth_capped5.v1","status":"active"},
+    {"key":"football.prematch.away_history_sufficient_5.v1","status":"active"},
+    {"key":"football.prematch.away_opponent_adjusted_result_residual_last5.v1","status":"active"},
+    {"key":"football.prematch.away_points_per_match_last5.v1","status":"active"},
+    {"key":"football.prematch.away_shots_for_per_match_last5.v1","status":"active"},
+    {"key":"football.prematch.away_xg_against_per_match_last5.v1","status":"active"},
+    {"key":"football.prematch.away_xg_for_per_match_last5.v1","status":"active"},
+    {"key":"football.prematch.competition_first10_goal_rate_prior.v1","status":"active"},
+    {"key":"football.prematch.elo_diff_home_minus_away.v1","status":"active"},
+    {"key":"football.prematch.home_days_since_previous_match.v1","status":"active"},
+    {"key":"football.prematch.home_elo_pre.v1","status":"active"},
+    {"key":"football.prematch.home_first10_goal_rate_last5.v1","status":"active"},
+    {"key":"football.prematch.home_first10_xg_for_per_match_last5.v1","status":"active"},
+    {"key":"football.prematch.home_goal_diff_per_match_last5.v1","status":"active"},
+    {"key":"football.prematch.home_history_depth_capped5.v1","status":"active"},
+    {"key":"football.prematch.home_history_sufficient_5.v1","status":"active"},
+    {"key":"football.prematch.home_opponent_adjusted_result_residual_last5.v1","status":"active"},
+    {"key":"football.prematch.home_points_per_match_last5.v1","status":"active"},
+    {"key":"football.prematch.home_shots_for_per_match_last5.v1","status":"active"},
+    {"key":"football.prematch.home_xg_against_per_match_last5.v1","status":"active"},
+    {"key":"football.prematch.home_xg_for_per_match_last5.v1","status":"active"},
+    {"key":"football.prematch.rest_days_diff_home_minus_away.v1","status":"active"},
+    {"key":"football.prematch.xg_matchup_edge_home_minus_away.v1","status":"active"}
+  ]
+}
