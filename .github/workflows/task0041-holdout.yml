@@ -1,0 +1,65 @@
+name: TASK-0041 Multi-Season Temporal Holdout Freeze
+
+on:
+  push:
+    branches:
+      - task0041-multiseason-holdout
+    paths:
+      - task0041/execute.py
+      - .github/workflows/task0041-holdout.yml
+
+permissions:
+  contents: read
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify planner
+        run: python -m py_compile task0041/execute.py
+
+      - name: Prepare pinned StatsBomb metadata repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMIT=b0bc9f22dd77c206ddedc1d742893b3bbe64baec
+          git clone --filter=blob:none --no-checkout https://github.com/hudl/open-data.git /tmp/open-data
+          git -C /tmp/open-data fetch --filter=blob:none --depth=1 origin "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse FETCH_HEAD)" = "$COMMIT"
+          git -C /tmp/open-data checkout --detach "$COMMIT"
+
+      - name: Freeze label-free multi-season corpus and untouched holdout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/task0041
+          python task0041/execute.py \
+            --repo /tmp/open-data \
+            --commit b0bc9f22dd77c206ddedc1d742893b3bbe64baec \
+            --output /tmp/task0041 \
+            | tee /tmp/task0041/summary.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/task0041/TASK-0041-temporal-holdout-plan.json'))
+          assert p['status']=='TEMPORAL_HOLDOUT_FROZEN_METADATA_ONLY', p
+          assert p['holdout_labels_opened'] is False, p
+          assert p['model_training_performed'] is False, p
+          assert p['development_match_count'] > 1140, p
+          assert p['holdout_match_count'] >= 250, p
+          assert p['total_match_count'] == p['development_match_count'] + p['holdout_match_count'], p
+          print('TASK0041_TEMPORAL_HOLDOUT_FREEZE_GATE=PASS')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: task0041-holdout-plan
+          path: /tmp/task0041
+          if-no-files-found: error
+          retention-days: 7
