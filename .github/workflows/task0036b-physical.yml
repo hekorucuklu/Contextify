@@ -1,0 +1,140 @@
+name: TASK-0036B Physical Prematch Feature Closure
+
+on:
+  push:
+    branches:
+      - task0036b-physical-execution-20260813
+    paths:
+      - .github/workflows/task0036b-physical.yml
+
+permissions:
+  contents: read
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify execution script
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile task0036b/execute.py
+          echo "556eda7bb8956ce9a6ee974bcb22ad87ebf9414f2c84c169190fbb63f76b1454  task0036b/execute.py" | sha256sum -c -
+
+      - name: Prepare pinned StatsBomb metadata checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMIT=b0bc9f22dd77c206ddedc1d742893b3bbe64baec
+          git clone --filter=blob:none --no-checkout https://github.com/hudl/open-data.git /tmp/open-data
+          git -C /tmp/open-data fetch --filter=blob:none --depth=1 origin "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse FETCH_HEAD)" = "$COMMIT"
+          git -C /tmp/open-data sparse-checkout init --no-cone
+          printf '/data/competitions.json\n/data/matches/\n' > /tmp/open-data/.git/info/sparse-checkout
+          git -C /tmp/open-data checkout --detach "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse HEAD)" = "$COMMIT"
+
+      - name: Select deterministic corpus and freeze temporal boundaries before labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/task0036b
+          python task0036b/execute.py select \
+            --repo /tmp/open-data \
+            --commit b0bc9f22dd77c206ddedc1d742893b3bbe64baec \
+            --output /tmp/task0036b \
+            | tee /tmp/task0036b-selection-output.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/task0036b-selection-output.json'))
+          assert p['match_count'] >= 500, p
+          assert p['competition_count'] >= 3, p
+          counts=p['split_plan']['expected_split_counts_from_metadata']
+          assert all(counts.get(k,0)>0 for k in ('train','validation','calibration','test')), counts
+          print('TASK0036B_PRELABEL_SPLIT_FREEZE_GATE=PASS')
+          PY
+
+      - name: Fetch only selected event objects from pinned commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          { printf '/data/competitions.json\n/data/matches/\n'; sed 's#^#/#' /tmp/task0036b/selected-event-paths.txt; } > /tmp/task0036b-sparse-patterns
+          cp /tmp/task0036b-sparse-patterns /tmp/open-data/.git/info/sparse-checkout
+          git -C /tmp/open-data read-tree -mu HEAD
+
+      - name: Materialize real prematch features and leakage audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python task0036b/execute.py build \
+            --repo /tmp/open-data \
+            --commit b0bc9f22dd77c206ddedc1d742893b3bbe64baec \
+            --output /tmp/task0036b \
+            | tee /tmp/task0036b-build-output.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/task0036b/TASK-0036B-VERIFIED-receipt.json'))
+          assert p['status']=='VERIFIED', p
+          assert p['source_commit']=='b0bc9f22dd77c206ddedc1d742893b3bbe64baec', p
+          assert p['match_count'] >= 500 and p['competition_count'] >= 3, p
+          assert p['exact_git_blob_verified_count']==p['match_count'], p
+          assert p['canonical_label_count']==p['match_count'], p
+          assert p['censored_count']==0, p
+          assert p['feature_row_count']==p['match_count'], p
+          assert p['feature_count']==7, p
+          assert p['feature_audit_status']=='PASSED', p
+          assert p['leakage_violation_count']==0, p
+          assert p['negative_leakage_gate']=='PASS', p
+          assert p['model_training_performed'] is False, p
+          assert all(p['split_counts'].get(k,0)>0 for k in ('train','validation','calibration','test')), p
+          print('TASK0036B_ACCEPTANCE_GATE=PASS')
+          PY
+
+      - name: Deterministic freeze rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/task0036b
+          sha256sum expanded-corpus.json temporal-split-plan.json canonical-first10-labels.json leakage-safe-prematch-feature-dataset-v1.json feature-availability-report.json negative-leakage-gate.json TASK-0036B-VERIFIED-receipt.json > /tmp/task0036b-first.sha256
+          cd "$GITHUB_WORKSPACE"
+          python task0036b/execute.py build \
+            --repo /tmp/open-data \
+            --commit b0bc9f22dd77c206ddedc1d742893b3bbe64baec \
+            --output /tmp/task0036b >/tmp/task0036b-freeze-output.json
+          cd /tmp/task0036b
+          sha256sum expanded-corpus.json temporal-split-plan.json canonical-first10-labels.json leakage-safe-prematch-feature-dataset-v1.json feature-availability-report.json negative-leakage-gate.json TASK-0036B-VERIFIED-receipt.json > /tmp/task0036b-second.sha256
+          diff -u /tmp/task0036b-first.sha256 /tmp/task0036b-second.sha256
+          printf 'FREEZE_CHECK_GATE=PASS\n' > freeze-check.txt
+
+      - name: Assemble closure artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/task0036b-result/artifacts/TASK-0036B
+          cp /tmp/task0036b/expanded-corpus.json /tmp/task0036b-result/artifacts/TASK-0036B/
+          cp /tmp/task0036b/temporal-split-plan.json /tmp/task0036b-result/artifacts/TASK-0036B/
+          cp /tmp/task0036b/selected-event-paths.txt /tmp/task0036b-result/artifacts/TASK-0036B/
+          cp /tmp/task0036b/canonical-first10-labels.json /tmp/task0036b-result/artifacts/TASK-0036B/
+          cp /tmp/task0036b/leakage-safe-prematch-feature-dataset-v1.json /tmp/task0036b-result/artifacts/TASK-0036B/
+          cp /tmp/task0036b/feature-availability-report.json /tmp/task0036b-result/artifacts/TASK-0036B/
+          cp /tmp/task0036b/negative-leakage-gate.json /tmp/task0036b-result/artifacts/TASK-0036B/
+          cp /tmp/task0036b/TASK-0036B-VERIFIED-receipt.json /tmp/task0036b-result/artifacts/TASK-0036B/
+          cp /tmp/task0036b/freeze-check.txt /tmp/task0036b-result/artifacts/TASK-0036B/
+          printf '%s\n' b0bc9f22dd77c206ddedc1d742893b3bbe64baec > /tmp/task0036b-result/artifacts/TASK-0036B/pinned-source-commit.txt
+          printf '%s\n' 556eda7bb8956ce9a6ee974bcb22ad87ebf9414f2c84c169190fbb63f76b1454 > /tmp/task0036b-result/artifacts/TASK-0036B/execution-script-sha256.txt
+          cd /tmp/task0036b-result
+          find . -type f ! -name result-files.sha256 -print0 | sort -z | xargs -0 sha256sum > artifacts/TASK-0036B/result-files.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: task0036b-verified-result
+          path: /tmp/task0036b-result
+          if-no-files-found: error
+          retention-days: 7
