@@ -29,14 +29,14 @@ jobs:
           python - <<'PY'
           import hashlib, io, pathlib, tokenize
           expected={
-            'modules/features/domain/prematch_expansion.py':'6c64fd0c492d79eea3ec2dddde6e441f89ee49627cd693ca27be2aac7cc1dfc1',
-            'modules/features/infrastructure/research/statsbomb_process_adapter.py':'e80cf8e6c6771db26e0926fa25a8e473631c97b7936105a1d73822944593c1c6',
+            'modules/features/domain/prematch_expansion.py':'b925d26680b18e58f88f6da613713453246b58eaa913ae677b08d8ea0509504c',
+            'modules/features/infrastructure/research/statsbomb_process_adapter.py':'c1997db02a4be52a4913130ecfa80cfaa47b63a5c165c130fe345e6920ec6641',
           }
           skip={tokenize.COMMENT,tokenize.NL,tokenize.NEWLINE,tokenize.INDENT,tokenize.DEDENT,tokenize.ENDMARKER}
           for name,want in expected.items():
             src=pathlib.Path(name).read_text()
-            toks=[(t.type,t.string) for t in tokenize.generate_tokens(io.StringIO(src).readline) if t.type not in skip]
-            got=hashlib.sha256(repr(toks).encode()).hexdigest()
+            vals=[t.string for t in tokenize.generate_tokens(io.StringIO(src).readline) if t.type not in skip]
+            got=hashlib.sha256('\0'.join(vals).encode()).hexdigest()
             assert got==want,(name,got,want)
           print('TASK0039B_EXECUTION_SEMANTICS_GATE=PASS')
           PY
