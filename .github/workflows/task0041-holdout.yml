@@ -1,28 +1,30 @@
-name: TASK-0041 Multi-Season Temporal Holdout Freeze
+name: TASK-0041 Multi-Season Temporal Holdout Closure
 
 on:
   push:
     branches:
       - task0041-multiseason-holdout
     paths:
-      - task0041/execute.py
-      - task0041/diagnose.py
+      - task0041/freeze_plan.py
+      - task0041/materialize.py
       - .github/workflows/task0041-holdout.yml
 
 permissions:
   contents: read
 
 jobs:
-  freeze:
+  close:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Verify scripts
-        run: python -m py_compile task0041/execute.py task0041/diagnose.py
+
+      - name: Verify frozen execution code
+        run: python -m py_compile task0041/execute.py task0041/freeze_plan.py task0041/materialize.py modules/features/domain/prematch_expansion.py modules/features/infrastructure/research/statsbomb_process_adapter.py
+
       - name: Prepare pinned StatsBomb metadata repository
         shell: bash
         run: |
@@ -34,15 +36,94 @@ jobs:
           git -C /tmp/open-data sparse-checkout init --no-cone
           printf '/data/competitions.json\n/data/matches/\n' > /tmp/open-data/.git/info/sparse-checkout
           git -C /tmp/open-data checkout --detach "$COMMIT"
-      - name: Inventory post-2015 domestic league coverage
+          test "$(git -C /tmp/open-data rev-parse HEAD)" = "$COMMIT"
+
+      - name: Freeze metadata-only development and sealed holdout
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/task0041
-          python -m task0041.diagnose | tee /tmp/task0041/coverage-summary.txt
+          python -m task0041.freeze_plan | tee /tmp/task0041/freeze-summary.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/task0041/TASK-0041-temporal-holdout-plan.json'))
+          assert p['status']=='TEMPORAL_HOLDOUT_FROZEN_METADATA_ONLY',p
+          assert p['development_match_count']==1688,p
+          assert p['holdout_match_count']==101,p
+          assert p['total_match_count']==1789,p
+          assert p['holdout_labels_opened'] is False,p
+          assert p['model_training_performed'] is False,p
+          print('TASK0041_METADATA_FREEZE_GATE=PASS')
+          PY
+
+      - name: Fetch only selected event objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          { printf '/data/competitions.json\n/data/matches/\n'; sed 's#^#/#' /tmp/task0041/selected-event-paths.txt; } > /tmp/task0041-sparse-patterns
+          cp /tmp/task0041-sparse-patterns /tmp/open-data/.git/info/sparse-checkout
+          git -C /tmp/open-data read-tree -mu HEAD
+
+      - name: Materialize real multi-season 28-feature corpus and seal holdout
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0041.materialize | tee /tmp/task0041/materialize-summary.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/task0041/TASK-0041-VERIFIED-receipt.json'))
+          assert p['status']=='VERIFIED',p
+          assert p['total_match_count']==1789,p
+          assert p['development_match_count']==1688,p
+          assert p['holdout_match_count']==101,p
+          assert p['feature_count']==28,p
+          assert p['development_feature_row_count']==1688,p
+          assert p['holdout_feature_row_count']==101,p
+          assert p['development_label_count']==1688,p
+          assert p['holdout_label_count']==0,p
+          assert p['holdout_labels_opened'] is False,p
+          assert p['exact_git_blob_verified_count']==1789,p
+          assert p['leakage_violation_count']==0,p
+          assert p['model_training_performed'] is False,p
+          print('TASK0041_PHYSICAL_ACCEPTANCE_GATE=PASS')
+          PY
+
+      - name: Deterministic freeze rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/task0041
+          sha256sum TASK-0041-temporal-holdout-plan.json development-feature-dataset-v3.json sealed-holdout-feature-dataset-v3.json development-first10-labels.json raw-verification-receipt.json TASK-0041-holdout-seal.json TASK-0041-VERIFIED-receipt.json > /tmp/task0041-first.sha256
+          cd "$GITHUB_WORKSPACE"
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0041.materialize >/tmp/task0041/rebuild-summary.json
+          cd /tmp/task0041
+          sha256sum TASK-0041-temporal-holdout-plan.json development-feature-dataset-v3.json sealed-holdout-feature-dataset-v3.json development-first10-labels.json raw-verification-receipt.json TASK-0041-holdout-seal.json TASK-0041-VERIFIED-receipt.json > /tmp/task0041-second.sha256
+          diff -u /tmp/task0041-first.sha256 /tmp/task0041-second.sha256
+          printf 'TASK0041_FREEZE_CHECK_GATE=PASS\n' > freeze-check.txt
+
+      - name: Assemble closure artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=/tmp/task0041-result/artifacts/TASK-0041
+          mkdir -p "$D"
+          cp /tmp/task0041/TASK-0041-temporal-holdout-plan.json "$D/"
+          cp /tmp/task0041/selected-event-paths.txt "$D/"
+          cp /tmp/task0041/development-feature-dataset-v3.json "$D/"
+          cp /tmp/task0041/sealed-holdout-feature-dataset-v3.json "$D/"
+          cp /tmp/task0041/development-first10-labels.json "$D/"
+          cp /tmp/task0041/raw-verification-receipt.json "$D/"
+          cp /tmp/task0041/TASK-0041-holdout-seal.json "$D/"
+          cp /tmp/task0041/TASK-0041-VERIFIED-receipt.json "$D/"
+          cp /tmp/task0041/freeze-check.txt "$D/"
+          cp task0039b/registry.json "$D/execution-registry.json"
+          printf '%s\n' b0bc9f22dd77c206ddedc1d742893b3bbe64baec > "$D/pinned-source-commit.txt"
+          cd /tmp/task0041-result
+          find . -type f ! -name result-files.sha256 -print0 | sort -z | xargs -0 sha256sum > artifacts/TASK-0041/result-files.sha256
+
       - uses: actions/upload-artifact@v4
         with:
-          name: task0041-coverage-inventory
-          path: /tmp/task0041
+          name: task0041-verified-result
+          path: /tmp/task0041-result
           if-no-files-found: error
           retention-days: 7
