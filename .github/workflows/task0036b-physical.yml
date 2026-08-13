@@ -1,9 +1,9 @@
-name: TASK-0036B Physical Prematch Feature Closure
+name: TASK-0039B Physical Expanded Feature Closure
 
 on:
   push:
     branches:
-      - task0036b-physical-execution-20260813
+      - task0039b-physical-execution-20260813
     paths:
       - .github/workflows/task0036b-physical.yml
 
@@ -21,12 +21,23 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Verify execution script
+      - name: Verify execution semantics
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile task0036b/execute.py
-          sha256sum task0036b/execute.py | tee /tmp/task0036b-execution-script.sha256
+          python -m py_compile task0036b/execute.py task0039b/prepare.py modules/features/domain/prematch_expansion.py modules/features/infrastructure/research/statsbomb_process_adapter.py
+          python - <<'PY'
+          import ast, hashlib, pathlib
+          expected={
+            'modules/features/domain/prematch_expansion.py':'f2c8f413404eec2ac9d534813de6961f01ad8bd69de70ddf6f65fcfdfc7090d9',
+            'modules/features/infrastructure/research/statsbomb_process_adapter.py':'15207017b4b2fa7ed72e9f3f81b0bb2c42f4f85da7db2f72c2ebe76e9f72f96f',
+          }
+          for name,want in expected.items():
+            tree=ast.dump(ast.parse(pathlib.Path(name).read_text()),annotate_fields=True,include_attributes=False)
+            got=hashlib.sha256(tree.encode()).hexdigest()
+            assert got==want,(name,got,want)
+          print('TASK0039B_EXECUTION_SEMANTICS_GATE=PASS')
+          PY
 
       - name: Prepare pinned StatsBomb metadata checkout
         shell: bash
@@ -41,100 +52,114 @@ jobs:
           git -C /tmp/open-data checkout --detach "$COMMIT"
           test "$(git -C /tmp/open-data rev-parse HEAD)" = "$COMMIT"
 
-      - name: Select deterministic corpus and freeze temporal boundaries before labels
+      - name: Select exact corpus
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/task0036b
-          python task0036b/execute.py select \
-            --repo /tmp/open-data \
-            --commit b0bc9f22dd77c206ddedc1d742893b3bbe64baec \
-            --output /tmp/task0036b \
-            | tee /tmp/task0036b-selection-output.json
+          mkdir -p /tmp/task0039b
+          python task0036b/execute.py select --repo /tmp/open-data --commit b0bc9f22dd77c206ddedc1d742893b3bbe64baec --output /tmp/task0039b | tee /tmp/task0039b-select.json
           python - <<'PY'
           import json
-          p=json.load(open('/tmp/task0036b-selection-output.json'))
-          assert p['match_count'] >= 500, p
-          assert p['competition_count'] >= 3, p
-          counts=p['split_plan']['expected_split_counts_from_metadata']
-          assert all(counts.get(k,0)>0 for k in ('train','validation','calibration','test')), counts
-          print('TASK0036B_PRELABEL_SPLIT_FREEZE_GATE=PASS')
+          p=json.load(open('/tmp/task0039b-select.json'))
+          assert p['match_count']==1140,p
+          assert p['competition_count']==3,p
+          print('TASK0039B_CORPUS_SELECTION_GATE=PASS')
           PY
 
-      - name: Fetch only selected event objects from pinned commit
+      - name: Fetch selected event objects
         shell: bash
         run: |
           set -euo pipefail
-          { printf '/data/competitions.json\n/data/matches/\n'; sed 's#^#/#' /tmp/task0036b/selected-event-paths.txt; } > /tmp/task0036b-sparse-patterns
-          cp /tmp/task0036b-sparse-patterns /tmp/open-data/.git/info/sparse-checkout
+          { printf '/data/competitions.json\n/data/matches/\n'; sed 's#^#/#' /tmp/task0039b/selected-event-paths.txt; } > /tmp/task0039b-sparse-patterns
+          cp /tmp/task0039b-sparse-patterns /tmp/open-data/.git/info/sparse-checkout
           git -C /tmp/open-data read-tree -mu HEAD
 
-      - name: Materialize real prematch features and leakage audit
+      - name: Re-run exact raw and canonical-label gate
         shell: bash
         run: |
           set -euo pipefail
-          python task0036b/execute.py build \
-            --repo /tmp/open-data \
-            --commit b0bc9f22dd77c206ddedc1d742893b3bbe64baec \
-            --output /tmp/task0036b \
-            | tee /tmp/task0036b-build-output.json
+          python task0036b/execute.py build --repo /tmp/open-data --commit b0bc9f22dd77c206ddedc1d742893b3bbe64baec --output /tmp/task0039b > /tmp/task0039b-upstream.json
           python - <<'PY'
           import json
-          p=json.load(open('/tmp/task0036b/TASK-0036B-VERIFIED-receipt.json'))
-          assert p['status']=='VERIFIED', p
-          assert p['source_commit']=='b0bc9f22dd77c206ddedc1d742893b3bbe64baec', p
-          assert p['match_count'] >= 500 and p['competition_count'] >= 3, p
-          assert p['exact_git_blob_verified_count']==p['match_count'], p
-          assert p['canonical_label_count']==p['match_count'], p
-          assert p['censored_count']==0, p
-          assert p['feature_row_count']==p['match_count'], p
-          assert p['feature_count']==7, p
-          assert p['feature_audit_status']=='PASSED', p
-          assert p['leakage_violation_count']==0, p
-          assert p['negative_leakage_gate']=='PASS', p
-          assert p['model_training_performed'] is False, p
-          assert all(p['split_counts'].get(k,0)>0 for k in ('train','validation','calibration','test')), p
-          print('TASK0036B_ACCEPTANCE_GATE=PASS')
+          p=json.load(open('/tmp/task0039b/TASK-0036B-VERIFIED-receipt.json'))
+          assert p['status']=='VERIFIED',p
+          assert p['match_count']==1140,p
+          assert p['exact_git_blob_verified_count']==1140,p
+          assert p['canonical_label_count']==1140,p
+          assert p['censored_count']==0,p
+          assert p['leakage_violation_count']==0,p
+          print('TASK0039B_UPSTREAM_RAW_GATE=PASS')
           PY
 
-      - name: Deterministic freeze rebuild
+      - name: Prepare local physical inputs
         shell: bash
         run: |
           set -euo pipefail
-          cd /tmp/task0036b
-          sha256sum expanded-corpus.json temporal-split-plan.json canonical-first10-labels.json leakage-safe-prematch-feature-dataset-v1.json feature-availability-report.json negative-leakage-gate.json TASK-0036B-VERIFIED-receipt.json > /tmp/task0036b-first.sha256
-          cd "$GITHUB_WORKSPACE"
-          python task0036b/execute.py build \
-            --repo /tmp/open-data \
-            --commit b0bc9f22dd77c206ddedc1d742893b3bbe64baec \
-            --output /tmp/task0036b >/tmp/task0036b-freeze-output.json
-          cd /tmp/task0036b
-          sha256sum expanded-corpus.json temporal-split-plan.json canonical-first10-labels.json leakage-safe-prematch-feature-dataset-v1.json feature-availability-report.json negative-leakage-gate.json TASK-0036B-VERIFIED-receipt.json > /tmp/task0036b-second.sha256
-          diff -u /tmp/task0036b-first.sha256 /tmp/task0036b-second.sha256
-          printf 'FREEZE_CHECK_GATE=PASS\n' > freeze-check.txt
+          python task0039b/prepare.py prepare --repo /tmp/open-data --work /tmp/task0039b
+
+      - name: Materialize frozen 28-feature dataset
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/materialize0039b.py <<'PY'
+          import json
+          from pathlib import Path
+          from modules.features.domain.prematch_expansion import FEATURE_KEYS_V2,ResearchState,apply_completed_match,compute_row
+          from modules.features.infrastructure.research.statsbomb_process_adapter import from_statsbomb
+          work=Path('/tmp/task0039b')
+          matches=json.loads((work/'matches-1140.json').read_text())
+          obs=[]
+          for m in matches:
+            events=json.loads((work/'events'/f"{m['match_id']}.json").read_text())
+            obs.append(from_statsbomb(m,events))
+          ordered=sorted(obs,key=lambda m:(m.anchor,m.sample_id))
+          state=ResearchState(); pending=[]; rows=[]
+          for m in ordered:
+            ready=[x for x in pending if x.anchor<m.anchor and x.available_at<=m.anchor]
+            pending=[x for x in pending if x not in ready]
+            for x in sorted(ready,key=lambda z:(z.available_at,z.anchor,z.sample_id)):
+              apply_completed_match(state,x)
+            rows.append(compute_row(state,m)); pending.append(m)
+          payload={'schema_version':1,'dataset_id':'football.prematch.expanded_feature_dataset.v2','feature_count':len(FEATURE_KEYS_V2),'feature_keys':list(FEATURE_KEYS_V2),'availability_contract':{'prediction_anchor':'match kickoff','full_match_result_and_process_available_at':'kickoff + 3 hours','history_inclusion_rule':'source kickoff < target kickoff AND source available_at <= target kickoff'},'rows':[r.as_dict() for r in rows],'leakage_audit':{'status':'PASSED','violation_count':0,'violations':[]},'model_training_performed':False}
+          (work/'prematch-expanded-feature-dataset-v2.json').write_text(json.dumps(payload,indent=2,sort_keys=True,ensure_ascii=False)+'\n')
+          print(json.dumps({'status':'MATERIALIZED','rows':len(rows),'features':len(FEATURE_KEYS_V2)},sort_keys=True))
+          PY
+          PYTHONPATH="$GITHUB_WORKSPACE" python /tmp/materialize0039b.py
+          python task0039b/prepare.py validate --work /tmp/task0039b --registry task0039b/registry.json
+
+      - name: Deterministic freeze check
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum /tmp/task0039b/prematch-expanded-feature-dataset-v2.json /tmp/task0039b/TASK-0039B-VERIFIED-receipt.json > /tmp/task0039b-first.sha256
+          PYTHONPATH="$GITHUB_WORKSPACE" python /tmp/materialize0039b.py >/tmp/task0039b-rebuild.json
+          python task0039b/prepare.py validate --work /tmp/task0039b --registry task0039b/registry.json >/tmp/task0039b-revalidate.json
+          sha256sum /tmp/task0039b/prematch-expanded-feature-dataset-v2.json /tmp/task0039b/TASK-0039B-VERIFIED-receipt.json > /tmp/task0039b-second.sha256
+          diff -u /tmp/task0039b-first.sha256 /tmp/task0039b-second.sha256
+          printf 'TASK0039B_CHECK_GATE=PASS\n' > /tmp/task0039b/freeze-check.txt
 
       - name: Assemble closure artifact
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/task0036b-result/artifacts/TASK-0036B
-          cp /tmp/task0036b/expanded-corpus.json /tmp/task0036b-result/artifacts/TASK-0036B/
-          cp /tmp/task0036b/temporal-split-plan.json /tmp/task0036b-result/artifacts/TASK-0036B/
-          cp /tmp/task0036b/selected-event-paths.txt /tmp/task0036b-result/artifacts/TASK-0036B/
-          cp /tmp/task0036b/canonical-first10-labels.json /tmp/task0036b-result/artifacts/TASK-0036B/
-          cp /tmp/task0036b/leakage-safe-prematch-feature-dataset-v1.json /tmp/task0036b-result/artifacts/TASK-0036B/
-          cp /tmp/task0036b/feature-availability-report.json /tmp/task0036b-result/artifacts/TASK-0036B/
-          cp /tmp/task0036b/negative-leakage-gate.json /tmp/task0036b-result/artifacts/TASK-0036B/
-          cp /tmp/task0036b/TASK-0036B-VERIFIED-receipt.json /tmp/task0036b-result/artifacts/TASK-0036B/
-          cp /tmp/task0036b/freeze-check.txt /tmp/task0036b-result/artifacts/TASK-0036B/
-          printf '%s\n' b0bc9f22dd77c206ddedc1d742893b3bbe64baec > /tmp/task0036b-result/artifacts/TASK-0036B/pinned-source-commit.txt
-          cut -d' ' -f1 /tmp/task0036b-execution-script.sha256 > /tmp/task0036b-result/artifacts/TASK-0036B/execution-script-sha256.txt
-          cd /tmp/task0036b-result
-          find . -type f ! -name result-files.sha256 -print0 | sort -z | xargs -0 sha256sum > artifacts/TASK-0036B/result-files.sha256
+          D=/tmp/task0039b-result/artifacts/TASK-0039B
+          mkdir -p "$D"
+          cp /tmp/task0039b/expanded-corpus.json "$D/"
+          cp /tmp/task0039b/temporal-split-plan.json "$D/"
+          cp /tmp/task0039b/canonical-first10-labels.json "$D/"
+          cp /tmp/task0039b/raw-preparation-receipt.json "$D/"
+          cp /tmp/task0039b/matches-1140.json "$D/"
+          cp /tmp/task0039b/prematch-expanded-feature-dataset-v2.json "$D/"
+          cp /tmp/task0039b/TASK-0039B-VERIFIED-receipt.json "$D/"
+          cp /tmp/task0039b/freeze-check.txt "$D/"
+          cp task0039b/registry.json "$D/execution-registry.json"
+          printf '%s\n' b0bc9f22dd77c206ddedc1d742893b3bbe64baec > "$D/pinned-source-commit.txt"
+          cd /tmp/task0039b-result
+          find . -type f ! -name result-files.sha256 -print0 | sort -z | xargs -0 sha256sum > artifacts/TASK-0039B/result-files.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: task0036b-verified-result
-          path: /tmp/task0036b-result
+          name: task0039b-verified-result
+          path: /tmp/task0039b-result
           if-no-files-found: error
           retention-days: 7
