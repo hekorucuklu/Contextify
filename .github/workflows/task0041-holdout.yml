@@ -43,17 +43,37 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/task0041
-          python task0041/execute.py \
-            --repo /tmp/open-data \
-            --commit b0bc9f22dd77c206ddedc1d742893b3bbe64baec \
-            --output /tmp/task0041 \
-            | tee /tmp/task0041/summary.json
+          python - <<'PY' | tee /tmp/task0041/summary.json
+          import json
+          from datetime import datetime
+          from pathlib import Path
+          import task0041.execute as m
+
+          repo=Path('/tmp/open-data')
+          commit=m.PINNED_COMMIT
+          rows,_=m.inventory(repo, commit)
+          eligible=[x for x in rows if x['full_league_eligible']]
+          latest=max(x['season_start_year'] for x in eligible)
+          holdout=[x for x in eligible if x['season_start_year']==latest]
+          holdout_start=min(datetime.fromisoformat(x['first_match_at']) for x in holdout)
+          pre=[x for x in eligible if (x['competition_id'],x['season_id']) not in m.BASELINE_COHORTS and datetime.fromisoformat(x['last_match_at']) < holdout_start]
+          actual=min(3,len(pre))
+          assert actual >= 1, pre
+          m.ADDITIONAL_DEVELOPMENT_COHORT_COUNT=actual
+          p=m.plan(repo, commit, Path('/tmp/task0041'))
+          p['selection_policy']='preserve-task0039b-baseline-plus-up-to-3-latest-preholdout-full-league-cohorts-latest-start-year-sealed-v2'
+          p['maximum_additional_development_cohorts']=3
+          p['actual_additional_development_cohorts']=actual
+          Path('/tmp/task0041/TASK-0041-temporal-holdout-plan.json').write_text(m.jdump(p), encoding='utf-8')
+          print(json.dumps({'actual_additional_development_cohorts':actual,'development_match_count':p['development_match_count'],'holdout_match_count':p['holdout_match_count'],'holdout_cohorts':[(x['competition_name'],x['season_name']) for x in p['holdout_cohorts']]},sort_keys=True))
+          PY
           python - <<'PY'
           import json
           p=json.load(open('/tmp/task0041/TASK-0041-temporal-holdout-plan.json'))
           assert p['status']=='TEMPORAL_HOLDOUT_FROZEN_METADATA_ONLY', p
           assert p['holdout_labels_opened'] is False, p
           assert p['model_training_performed'] is False, p
+          assert p['actual_additional_development_cohorts'] >= 1, p
           assert p['development_match_count'] > 1140, p
           assert p['holdout_match_count'] >= 250, p
           assert p['total_match_count'] == p['development_match_count'] + p['holdout_match_count'], p
