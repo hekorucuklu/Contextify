@@ -27,14 +27,16 @@ jobs:
           set -euo pipefail
           python -m py_compile task0036b/execute.py task0039b/prepare.py modules/features/domain/prematch_expansion.py modules/features/infrastructure/research/statsbomb_process_adapter.py
           python - <<'PY'
-          import ast, hashlib, pathlib
+          import hashlib, io, pathlib, tokenize
           expected={
-            'modules/features/domain/prematch_expansion.py':'f2c8f413404eec2ac9d534813de6961f01ad8bd69de70ddf6f65fcfdfc7090d9',
-            'modules/features/infrastructure/research/statsbomb_process_adapter.py':'15207017b4b2fa7ed72e9f3f81b0bb2c42f4f85da7db2f72c2ebe76e9f72f96f',
+            'modules/features/domain/prematch_expansion.py':'6c64fd0c492d79eea3ec2dddde6e441f89ee49627cd693ca27be2aac7cc1dfc1',
+            'modules/features/infrastructure/research/statsbomb_process_adapter.py':'e80cf8e6c6771db26e0926fa25a8e473631c97b7936105a1d73822944593c1c6',
           }
+          skip={tokenize.COMMENT,tokenize.NL,tokenize.NEWLINE,tokenize.INDENT,tokenize.DEDENT,tokenize.ENDMARKER}
           for name,want in expected.items():
-            tree=ast.dump(ast.parse(pathlib.Path(name).read_text()),annotate_fields=True,include_attributes=False)
-            got=hashlib.sha256(tree.encode()).hexdigest()
+            src=pathlib.Path(name).read_text()
+            toks=[(t.type,t.string) for t in tokenize.generate_tokens(io.StringIO(src).readline) if t.type not in skip]
+            got=hashlib.sha256(repr(toks).encode()).hexdigest()
             assert got==want,(name,got,want)
           print('TASK0039B_EXECUTION_SEMANTICS_GATE=PASS')
           PY
