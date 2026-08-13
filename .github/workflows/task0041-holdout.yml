@@ -35,7 +35,11 @@ jobs:
           printf '/data/competitions.json\n/data/matches/\n' > /tmp/open-data/.git/info/sparse-checkout
           git -C /tmp/open-data checkout --detach "$COMMIT"
       - name: Inventory post-2015 domestic league coverage
-        run: python task0041/diagnose.py | tee /tmp/task0041/coverage-summary.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/task0041
+          python -m task0041.diagnose | tee /tmp/task0041/coverage-summary.txt
       - uses: actions/upload-artifact@v4
         with:
           name: task0041-coverage-inventory
