@@ -1,4 +1,4 @@
-name: TASK-0053 Expanded Corpus Freeze
+name: TASK-0053 Expanded Corpus Physical v4 Closure
 
 on:
   push:
@@ -6,23 +6,27 @@ on:
       - task0053-large-corpus-expansion-20260814
     paths:
       - task0053/freeze_expanded.py
+      - task0053/materialize_v4_expanded.py
+      - modules/features/domain/explicit_maturity_v4.py
       - .github/workflows/task0053-expansion.yml
 
 permissions:
   contents: read
 
 jobs:
-  freeze:
+  execute:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - name: Verify code
-        run: python -m py_compile task0053/freeze_expanded.py task0041/execute.py
-      - name: Prepare pinned metadata repository
+        run: python -m py_compile task0053/freeze_expanded.py task0053/materialize_v4_expanded.py modules/features/domain/explicit_maturity_v4.py task0041/execute.py task0036b/execute.py
+
+      - name: Prepare pinned repository
         shell: bash
         run: |
           set -euo pipefail
@@ -34,6 +38,7 @@ jobs:
           printf '/data/competitions.json\n/data/matches/\n' > /tmp/open-data/.git/info/sparse-checkout
           git -C /tmp/open-data checkout --detach "$COMMIT"
           test "$(git -C /tmp/open-data rev-parse HEAD)" = "$COMMIT"
+
       - name: Freeze expanded corpus and new holdout metadata-only
         shell: bash
         run: |
@@ -43,15 +48,74 @@ jobs:
           import json
           p=json.load(open('/tmp/task0053/TASK-0053-expanded-corpus-plan.json'))
           assert p['status']=='EXPANDED_CORPUS_AND_NEW_FORWARD_HOLDOUT_FROZEN_METADATA_ONLY'
-          assert p['development_match_count']>1688
-          assert p['holdout_match_count']>=100
+          assert p['development_match_count']==2246
+          assert p['development_cohort_count']==21
+          assert p['holdout_match_count']==135
+          assert p['holdout_cohort_count']==3
+          assert p['development_end_at']=='2023-06-03T22:00:00+00:00'
+          assert p['holdout_start_at']=='2024-01-13T22:00:00+00:00'
           assert p['holdout_labels_opened'] is False
           assert p['holdout_evaluated'] is False
           assert p['model_training_performed'] is False
-          assert p['development_end_at'] < p['holdout_start_at']
           print('TASK0053_METADATA_FREEZE_GATE=PASS')
           PY
-      - name: Assemble freeze artifact
+
+      - name: Fetch development events only
+        shell: bash
+        run: |
+          set -euo pipefail
+          { printf '/data/competitions.json\n/data/matches/\n'; sed 's#^#/#' /tmp/task0053/development-event-paths.txt; } > /tmp/task0053-sparse-patterns
+          cp /tmp/task0053-sparse-patterns /tmp/open-data/.git/info/sparse-checkout
+          git -C /tmp/open-data read-tree -mu HEAD
+          test "$(wc -l < /tmp/task0053/development-event-paths.txt)" -eq 2246
+          test "$(wc -l < /tmp/task0053/holdout-event-paths.txt)" -eq 135
+
+      - name: Materialize real expanded 10-feature v4 development corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0053.materialize_v4_expanded | tee /tmp/task0053/materialize-summary.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/task0053/TASK-0053-VERIFIED-receipt.json'))
+          assert p['status']=='VERIFIED'
+          assert p['development_match_count']==2246
+          assert p['development_cohort_count']==21
+          assert p['predictive_feature_row_count']==2246
+          assert p['predictive_feature_count']==10
+          assert p['metadata_feature_count']==4
+          assert p['exact_git_blob_verified_count']==2246
+          assert p['canonical_label_count']==2246
+          assert p['censored_count']==0
+          assert p['schedule_numeric_null_count']==0
+          assert p['explicit_schedule_maturity_control_count']==2
+          assert p['removed_sign_unstable_features_absent'] is True
+          assert p['removed_opponent_relative_process_block'] is True
+          assert p['state_transition_leakage_violation_count']==0
+          assert p['feature_provenance_leakage_violation_count']==0
+          assert p['new_holdout_match_count']==135
+          assert p['new_holdout_cohort_count']==3
+          assert p['holdout_rows_materialized']==0
+          assert p['holdout_labels_opened'] is False
+          assert p['holdout_evaluated'] is False
+          assert p['model_training_performed'] is False
+          print('TASK0053_PHYSICAL_ACCEPTANCE_GATE=PASS')
+          PY
+
+      - name: Deterministic rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/task0053
+          sha256sum development-explicit-maturity-v4-expanded-dataset-v1.json development-first10-labels-task0053.json feature-availability.json raw-verification-receipt.json TASK-0053-VERIFIED-receipt.json > /tmp/task0053-first.sha256
+          cd "$GITHUB_WORKSPACE"
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0053.materialize_v4_expanded >/tmp/task0053/rebuild-summary.json
+          cd /tmp/task0053
+          sha256sum development-explicit-maturity-v4-expanded-dataset-v1.json development-first10-labels-task0053.json feature-availability.json raw-verification-receipt.json TASK-0053-VERIFIED-receipt.json > /tmp/task0053-second.sha256
+          diff -u /tmp/task0053-first.sha256 /tmp/task0053-second.sha256
+          printf 'TASK0053_CHECK_GATE=PASS\n' > freeze-check.txt
+
+      - name: Assemble artifact
         shell: bash
         run: |
           set -euo pipefail
@@ -60,12 +124,19 @@ jobs:
           cp /tmp/task0053/TASK-0053-expanded-corpus-plan.json "$D/"
           cp /tmp/task0053/development-event-paths.txt "$D/"
           cp /tmp/task0053/holdout-event-paths.txt "$D/"
+          cp /tmp/task0053/development-explicit-maturity-v4-expanded-dataset-v1.json "$D/"
+          cp /tmp/task0053/development-first10-labels-task0053.json "$D/"
+          cp /tmp/task0053/feature-availability.json "$D/"
+          cp /tmp/task0053/raw-verification-receipt.json "$D/"
+          cp /tmp/task0053/TASK-0053-VERIFIED-receipt.json "$D/"
+          cp /tmp/task0053/freeze-check.txt "$D/"
           cp /tmp/task0053-freeze-summary.json "$D/"
           cd /tmp/result
           find . -type f ! -name result-files.sha256 -print0 | sort -z | xargs -0 sha256sum > artifacts/TASK-0053/result-files.sha256
+
       - uses: actions/upload-artifact@v4
         with:
-          name: task0053-metadata-freeze
+          name: task0053-expanded-v4-verified-result
           path: /tmp/result
           if-no-files-found: error
           retention-days: 7
