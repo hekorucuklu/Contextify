@@ -1,0 +1,150 @@
+name: TASK-0064 3-Way Result Labels and Fresh Split
+
+on:
+  push:
+    branches:
+      - task0064-home-result-3way-labels-20260814
+    paths:
+      - task0064/execute.py
+      - .github/workflows/task0064-home-result-3way.yml
+
+permissions:
+  contents: read
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify execution code
+        run: python -m py_compile task0064/execute.py task0053/freeze_expanded.py
+
+      - name: Prepare exact pinned StatsBomb metadata repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMIT=b0bc9f22dd77c206ddedc1d742893b3bbe64baec
+          git clone --filter=blob:none --no-checkout https://github.com/hudl/open-data.git /tmp/open-data
+          git -C /tmp/open-data fetch --filter=blob:none --depth=1 origin "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse FETCH_HEAD)" = "$COMMIT"
+          git -C /tmp/open-data sparse-checkout init --no-cone
+          printf '/data/competitions.json\n/data/matches/\n' > /tmp/open-data/.git/info/sparse-checkout
+          git -C /tmp/open-data checkout --detach "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse HEAD)" = "$COMMIT"
+
+      - name: Regenerate TASK-0053 frozen membership metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0053.freeze_expanded >/tmp/task0053-freeze-summary.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/task0053/TASK-0053-expanded-corpus-plan.json'))
+          assert p['source_commit']=='b0bc9f22dd77c206ddedc1d742893b3bbe64baec'
+          assert p['development_match_count']==2246
+          assert p['development_cohort_count']==21
+          assert p['holdout_match_count']==135
+          assert p['holdout_labels_opened'] is False
+          assert p['holdout_evaluated'] is False
+          print('TASK0064_UPSTREAM_MEMBERSHIP_GATE=PASS')
+          PY
+
+      - name: Freeze fresh target geometry before label access
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e /tmp/task0064/development-home-result-3way-labels-v1.json || exit 91
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0064.execute freeze-geometry | tee /tmp/task0064-geometry-summary.json
+          cd /tmp/task0064
+          sha256sum TASK-0064-FRESH-SPLIT-CONTRACT.json TASK-0064-GEOMETRY-FREEZE-RECEIPT.json > /tmp/task0064-prelabel-geometry.sha256
+          python - <<'PY'
+          import json
+          g=json.load(open('/tmp/task0064/TASK-0064-FRESH-SPLIT-CONTRACT.json'))
+          r=json.load(open('/tmp/task0064/TASK-0064-GEOMETRY-FREEZE-RECEIPT.json'))
+          assert g['status']=='FRESH_TARGET_GEOMETRY_FROZEN_BEFORE_LABEL_ACCESS'
+          assert g['development_match_count']==2246
+          assert g['rolling_origin_fold_count']==5
+          assert g['labels_read_for_geometry_design'] is False
+          assert g['model_run_for_geometry_design'] is False
+          assert g['consumed_task0061_holdout_overlap_count']==0
+          assert r['labels_read'] is False
+          assert r['model_run'] is False
+          print('TASK0064_PRELABEL_GEOMETRY_GATE=PASS')
+          PY
+
+      - name: Materialize exact canonical 3-way final-result labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0064.execute materialize-labels | tee /tmp/task0064-label-summary.json
+          python - <<'PY'
+          import json
+          r=json.load(open('/tmp/task0064/TASK-0064-VERIFIED-receipt.json'))
+          assert r['status']=='VERIFIED'
+          assert r['target']=='football.match.home_result_3way.v1'
+          assert r['development_match_count']==2246
+          assert r['canonical_label_count']==2246
+          assert r['censored_count']==0
+          assert sum(r['class_counts'].values())==2246
+          assert r['verified_matches_metadata_file_count']==21
+          assert r['exact_match_metadata_membership_count']==2246
+          assert r['rolling_origin_fold_count']==5
+          assert r['labels_read_for_geometry_design'] is False
+          assert r['model_training_performed'] is False
+          assert r['consumed_task0061_holdout_overlap_count']==0
+          assert r['new_external_holdout_created'] is False
+          print('TASK0064_LABEL_ACCEPTANCE_GATE=PASS')
+          PY
+
+      - name: Verify geometry remained immutable after labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/task0064
+          sha256sum TASK-0064-FRESH-SPLIT-CONTRACT.json TASK-0064-GEOMETRY-FREEZE-RECEIPT.json > /tmp/task0064-postlabel-geometry.sha256
+          diff -u /tmp/task0064-prelabel-geometry.sha256 /tmp/task0064-postlabel-geometry.sha256
+          echo TASK0064_GEOMETRY_IMMUTABILITY_GATE=PASS
+
+      - name: Deterministic label rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/task0064
+          sha256sum development-home-result-3way-labels-v1.json TASK-0064-CLASS-DISTRIBUTION-AUDIT.json TASK-0064-RAW-METADATA-VERIFICATION.json TASK-0064-VERIFIED-receipt.json > /tmp/task0064-first.sha256
+          cd "$GITHUB_WORKSPACE"
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0064.execute materialize-labels >/tmp/task0064-rebuild-summary.json
+          cd /tmp/task0064
+          sha256sum development-home-result-3way-labels-v1.json TASK-0064-CLASS-DISTRIBUTION-AUDIT.json TASK-0064-RAW-METADATA-VERIFICATION.json TASK-0064-VERIFIED-receipt.json > /tmp/task0064-second.sha256
+          diff -u /tmp/task0064-first.sha256 /tmp/task0064-second.sha256
+          printf 'TASK0064_CHECK_GATE=PASS\n' > freeze-check.txt
+
+      - name: Assemble immutable TASK-0064 artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=/tmp/result/artifacts/TASK-0064
+          mkdir -p "$D"
+          cp /tmp/task0064/TASK-0064-FRESH-SPLIT-CONTRACT.json "$D/"
+          cp /tmp/task0064/TASK-0064-GEOMETRY-FREEZE-RECEIPT.json "$D/"
+          cp /tmp/task0064/development-home-result-3way-labels-v1.json "$D/"
+          cp /tmp/task0064/TASK-0064-CLASS-DISTRIBUTION-AUDIT.json "$D/"
+          cp /tmp/task0064/TASK-0064-RAW-METADATA-VERIFICATION.json "$D/"
+          cp /tmp/task0064/TASK-0064-VERIFIED-receipt.json "$D/"
+          cp /tmp/task0064/freeze-check.txt "$D/"
+          cp /tmp/task0064-geometry-summary.json "$D/"
+          cp /tmp/task0064-label-summary.json "$D/"
+          cd /tmp/result
+          find . -type f ! -name result-files.sha256 -print0 | sort -z | xargs -0 sha256sum > artifacts/TASK-0064/result-files.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: task0064-home-result-3way-verified-result
+          path: /tmp/result
+          if-no-files-found: error
+          retention-days: 7
