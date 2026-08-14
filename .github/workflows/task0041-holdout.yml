@@ -1,12 +1,12 @@
-name: TASK-0047B Physical History-Maturity Feature Closure
+name: TASK-0050B Physical Explicit-Maturity v4 Feature Closure
 
 on:
   push:
     branches:
-      - task0047b-history-maturity-physical-20260814
+      - task0050b-explicit-maturity-v4-physical-20260814
     paths:
-      - task0047b/materialize.py
-      - modules/features/domain/history_maturity_redesign.py
+      - task0050b/materialize.py
+      - modules/features/domain/explicit_maturity_v4.py
       - .github/workflows/task0041-holdout.yml
 
 permissions:
@@ -23,7 +23,7 @@ jobs:
           python-version: "3.12"
 
       - name: Verify code
-        run: python -m py_compile task0047b/materialize.py modules/features/domain/history_maturity_redesign.py task0041/freeze_plan.py task0036b/execute.py
+        run: python -m py_compile task0050b/materialize.py modules/features/domain/explicit_maturity_v4.py task0041/freeze_plan.py task0036b/execute.py
 
       - name: Prepare pinned repository
         shell: bash
@@ -42,48 +42,51 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/task0041 /tmp/task0047b
+          mkdir -p /tmp/task0041 /tmp/task0050b
           PYTHONPATH="$GITHUB_WORKSPACE" python -m task0041.freeze_plan >/tmp/task0041/freeze-summary.json
-          cp /tmp/task0041/TASK-0041-temporal-holdout-plan.json /tmp/task0047b/
+          cp /tmp/task0041/TASK-0041-temporal-holdout-plan.json /tmp/task0050b/
           python - <<'PY'
           import json
-          p=json.load(open('/tmp/task0047b/TASK-0041-temporal-holdout-plan.json'))
+          p=json.load(open('/tmp/task0050b/TASK-0041-temporal-holdout-plan.json'))
           assert p['development_match_count']==1688
           assert p['holdout_match_count']==101
           assert p['holdout_labels_opened'] is False
           assert p['model_training_performed'] is False
-          with open('/tmp/task0047b/development-event-paths.txt','w') as f:
+          with open('/tmp/task0050b/development-event-paths.txt','w') as f:
               for m in p['development_matches']:
                   f.write(m['event_source_path']+'\n')
-          assert sum(1 for _ in open('/tmp/task0047b/development-event-paths.txt'))==1688
-          print('TASK0047B_MEMBERSHIP_GATE=PASS')
+          assert sum(1 for _ in open('/tmp/task0050b/development-event-paths.txt'))==1688
+          print('TASK0050B_MEMBERSHIP_GATE=PASS')
           PY
 
       - name: Fetch development events only
         shell: bash
         run: |
           set -euo pipefail
-          { printf '/data/competitions.json\n/data/matches/\n'; sed 's#^#/#' /tmp/task0047b/development-event-paths.txt; } > /tmp/task0047b-sparse-patterns
-          cp /tmp/task0047b-sparse-patterns /tmp/open-data/.git/info/sparse-checkout
+          { printf '/data/competitions.json\n/data/matches/\n'; sed 's#^#/#' /tmp/task0050b/development-event-paths.txt; } > /tmp/task0050b-sparse-patterns
+          cp /tmp/task0050b-sparse-patterns /tmp/open-data/.git/info/sparse-checkout
           git -C /tmp/open-data read-tree -mu HEAD
 
-      - name: Materialize real 11-feature development corpus
+      - name: Materialize real 10-feature v4 development corpus
         shell: bash
         run: |
           set -euo pipefail
-          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0047b.materialize | tee /tmp/task0047b/materialize-summary.json
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0050b.materialize | tee /tmp/task0050b/materialize-summary.json
           python - <<'PY'
           import json
-          p=json.load(open('/tmp/task0047b/TASK-0047B-VERIFIED-receipt.json'))
+          p=json.load(open('/tmp/task0050b/TASK-0050B-VERIFIED-receipt.json'))
           assert p['status']=='VERIFIED'
           assert p['development_match_count']==1688
           assert p['predictive_feature_row_count']==1688
-          assert p['predictive_feature_count']==11
+          assert p['predictive_feature_count']==10
           assert p['metadata_feature_count']==4
           assert p['exact_git_blob_verified_count']==1688
           assert p['canonical_label_count']==1688
           assert p['positive_count']==318
           assert p['censored_count']==0
+          assert p['schedule_numeric_null_count']==0
+          assert p['explicit_schedule_maturity_control_count']==2
+          assert p['removed_sign_unstable_features_absent'] is True
           assert p['removed_opponent_relative_process_block'] is True
           assert p['state_transition_leakage_violation_count']==0
           assert p['feature_provenance_leakage_violation_count']==0
@@ -91,42 +94,42 @@ jobs:
           assert p['holdout_labels_opened'] is False
           assert p['holdout_evaluated'] is False
           assert p['model_training_performed'] is False
-          print('TASK0047B_PHYSICAL_ACCEPTANCE_GATE=PASS')
+          print('TASK0050B_PHYSICAL_ACCEPTANCE_GATE=PASS')
           PY
 
       - name: Deterministic rebuild
         shell: bash
         run: |
           set -euo pipefail
-          cd /tmp/task0047b
-          sha256sum development-history-maturity-feature-dataset-v1.json development-first10-labels-task0047b.json feature-availability.json raw-verification-receipt.json TASK-0047B-VERIFIED-receipt.json > /tmp/task0047b-first.sha256
+          cd /tmp/task0050b
+          sha256sum development-explicit-maturity-v4-feature-dataset-v1.json development-first10-labels-task0050b.json feature-availability.json raw-verification-receipt.json TASK-0050B-VERIFIED-receipt.json > /tmp/task0050b-first.sha256
           cd "$GITHUB_WORKSPACE"
-          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0047b.materialize >/tmp/task0047b/rebuild-summary.json
-          cd /tmp/task0047b
-          sha256sum development-history-maturity-feature-dataset-v1.json development-first10-labels-task0047b.json feature-availability.json raw-verification-receipt.json TASK-0047B-VERIFIED-receipt.json > /tmp/task0047b-second.sha256
-          diff -u /tmp/task0047b-first.sha256 /tmp/task0047b-second.sha256
-          printf 'TASK0047B_CHECK_GATE=PASS\n' > freeze-check.txt
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0050b.materialize >/tmp/task0050b/rebuild-summary.json
+          cd /tmp/task0050b
+          sha256sum development-explicit-maturity-v4-feature-dataset-v1.json development-first10-labels-task0050b.json feature-availability.json raw-verification-receipt.json TASK-0050B-VERIFIED-receipt.json > /tmp/task0050b-second.sha256
+          diff -u /tmp/task0050b-first.sha256 /tmp/task0050b-second.sha256
+          printf 'TASK0050B_CHECK_GATE=PASS\n' > freeze-check.txt
 
       - name: Assemble artifact
         shell: bash
         run: |
           set -euo pipefail
-          D=/tmp/result/artifacts/TASK-0047B
+          D=/tmp/result/artifacts/TASK-0050B
           mkdir -p "$D"
-          cp /tmp/task0047b/TASK-0041-temporal-holdout-plan.json "$D/"
-          cp /tmp/task0047b/development-event-paths.txt "$D/"
-          cp /tmp/task0047b/development-history-maturity-feature-dataset-v1.json "$D/"
-          cp /tmp/task0047b/development-first10-labels-task0047b.json "$D/"
-          cp /tmp/task0047b/feature-availability.json "$D/"
-          cp /tmp/task0047b/raw-verification-receipt.json "$D/"
-          cp /tmp/task0047b/TASK-0047B-VERIFIED-receipt.json "$D/"
-          cp /tmp/task0047b/freeze-check.txt "$D/"
+          cp /tmp/task0050b/TASK-0041-temporal-holdout-plan.json "$D/"
+          cp /tmp/task0050b/development-event-paths.txt "$D/"
+          cp /tmp/task0050b/development-explicit-maturity-v4-feature-dataset-v1.json "$D/"
+          cp /tmp/task0050b/development-first10-labels-task0050b.json "$D/"
+          cp /tmp/task0050b/feature-availability.json "$D/"
+          cp /tmp/task0050b/raw-verification-receipt.json "$D/"
+          cp /tmp/task0050b/TASK-0050B-VERIFIED-receipt.json "$D/"
+          cp /tmp/task0050b/freeze-check.txt "$D/"
           cd /tmp/result
-          find . -type f ! -name result-files.sha256 -print0 | sort -z | xargs -0 sha256sum > artifacts/TASK-0047B/result-files.sha256
+          find . -type f ! -name result-files.sha256 -print0 | sort -z | xargs -0 sha256sum > artifacts/TASK-0050B/result-files.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: task0047b-verified-result
+          name: task0050b-verified-result
           path: /tmp/result
           if-no-files-found: error
           retention-days: 7
