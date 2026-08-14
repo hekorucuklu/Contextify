@@ -1,0 +1,71 @@
+name: TASK-0053 Expanded Corpus Freeze
+
+on:
+  push:
+    branches:
+      - task0053-large-corpus-expansion-20260814
+    paths:
+      - task0053/freeze_expanded.py
+      - .github/workflows/task0053-expansion.yml
+
+permissions:
+  contents: read
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify code
+        run: python -m py_compile task0053/freeze_expanded.py task0041/execute.py
+      - name: Prepare pinned metadata repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMIT=b0bc9f22dd77c206ddedc1d742893b3bbe64baec
+          git clone --filter=blob:none --no-checkout https://github.com/hudl/open-data.git /tmp/open-data
+          git -C /tmp/open-data fetch --filter=blob:none --depth=1 origin "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse FETCH_HEAD)" = "$COMMIT"
+          git -C /tmp/open-data sparse-checkout init --no-cone
+          printf '/data/competitions.json\n/data/matches/\n' > /tmp/open-data/.git/info/sparse-checkout
+          git -C /tmp/open-data checkout --detach "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse HEAD)" = "$COMMIT"
+      - name: Freeze expanded corpus and new holdout metadata-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0053.freeze_expanded | tee /tmp/task0053-freeze-summary.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/task0053/TASK-0053-expanded-corpus-plan.json'))
+          assert p['status']=='EXPANDED_CORPUS_AND_NEW_FORWARD_HOLDOUT_FROZEN_METADATA_ONLY'
+          assert p['development_match_count']>1688
+          assert p['holdout_match_count']>=100
+          assert p['holdout_labels_opened'] is False
+          assert p['holdout_evaluated'] is False
+          assert p['model_training_performed'] is False
+          assert p['development_end_at'] < p['holdout_start_at']
+          print('TASK0053_METADATA_FREEZE_GATE=PASS')
+          PY
+      - name: Assemble freeze artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=/tmp/result/artifacts/TASK-0053
+          mkdir -p "$D"
+          cp /tmp/task0053/TASK-0053-expanded-corpus-plan.json "$D/"
+          cp /tmp/task0053/development-event-paths.txt "$D/"
+          cp /tmp/task0053/holdout-event-paths.txt "$D/"
+          cp /tmp/task0053-freeze-summary.json "$D/"
+          cd /tmp/result
+          find . -type f ! -name result-files.sha256 -print0 | sort -z | xargs -0 sha256sum > artifacts/TASK-0053/result-files.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: task0053-metadata-freeze
+          path: /tmp/result
+          if-no-files-found: error
+          retention-days: 7
