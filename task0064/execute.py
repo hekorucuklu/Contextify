@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +73,7 @@ def freeze_geometry() -> int:
     # Final calibration target = last 20%; first 80% = model-selection zone.
     # Initial train = floor(45% of model-selection zone); remaining zone -> 5 near-equal validations.
     n = len(ordered)
-    nominal_cal_start = n - round(n * 0.20)  # 1797
+    nominal_cal_start = n - round(n * 0.20)
     cal_start = timestamp_atomic_cut(ordered, nominal_cal_start)
     model_zone_n = cal_start
     nominal_initial_train = int(model_zone_n * 0.45)
@@ -185,6 +185,7 @@ def materialize_labels() -> int:
     dev_ids = {int(x["provider_match_id"]) for x in plan["development_matches"]}
     meta_by_id: dict[int, dict[str, Any]] = {}
     verified_cohort_files = []
+    source_path_by_cs: dict[tuple[int, int], str] = {}
     for cohort in plan["development_cohorts"]:
         p = REPO / cohort["matches_source_path"]
         body = p.read_bytes()
@@ -195,6 +196,7 @@ def materialize_labels() -> int:
         arr = json.loads(body)
         if not isinstance(arr, list):
             raise RuntimeError(f"TASK0064_MATCH_METADATA_CONTENT_GATE_FAILED:{cohort['matches_source_path']}")
+        source_path_by_cs[(int(cohort["competition_id"]), int(cohort["season_id"]))] = cohort["matches_source_path"]
         selected_here = 0
         for m in arr:
             mid = int(m["match_id"])
@@ -246,6 +248,7 @@ def materialize_labels() -> int:
         else:
             class_id, class_key = 2, "HOME_WIN"
         class_counts[class_key] += 1
+        outcome_observed_at = kickoff_from_plan(item) + timedelta(hours=3)
         labels.append(
             {
                 "sample_id": f"statsbomb:{mid}",
@@ -256,9 +259,9 @@ def materialize_labels() -> int:
                 "home_score": hs,
                 "away_score": aws,
                 "status": "observed",
-                "outcome_observed_at": (kickoff_from_plan(item).replace(tzinfo=timezone.utc)).isoformat(),
+                "outcome_observed_at": outcome_observed_at.isoformat(),
                 "availability_rule": "kickoff_plus_3h_conservative_contract",
-                "source_matches_path": next(c["matches_source_path"] for c in plan["development_cohorts"] if int(c["competition_id"]) == int(item["competition_id"]) and int(c["season_id"]) == int(item["season_id"])),
+                "source_matches_path": source_path_by_cs[(int(item["competition_id"]), int(item["season_id"]))],
             }
         )
 
@@ -267,7 +270,6 @@ def materialize_labels() -> int:
     if sum(class_counts.values()) != 2246:
         raise RuntimeError("TASK0064_CLASS_COUNT_GATE_FAILED")
 
-    # Class distributions are reported only after geometry was frozen.
     by_sid = {x["sample_id"]: x for x in labels}
     fold_distributions = []
     for f in geometry["folds"]:
