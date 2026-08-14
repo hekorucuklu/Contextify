@@ -1,0 +1,154 @@
+name: TASK-0061 One-Time Sealed Holdout
+
+on:
+  push:
+    branches:
+      - task0061-one-time-holdout-20260814
+    paths:
+      - task0061/evaluate_holdout.py
+      - .github/workflows/task0061-holdout.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install frozen research dependencies
+        run: python -m pip install --disable-pip-version-check numpy==2.3.5 scipy==1.17.0 scikit-learn==1.8.0
+
+      - name: Download verified TASK-0053 development artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: task0053-expanded-v4-verified-result
+          path: /tmp/task0053artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: hekorucuklu/Contextify
+          run-id: 31790325528
+
+      - name: Verify sealed upstream and frozen candidate before holdout fetch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          A=Path('/tmp/task0053artifact/artifacts/TASK-0053')
+          p=json.load(open(A/'TASK-0053-expanded-corpus-plan.json'))
+          r=json.load(open(A/'TASK-0053-VERIFIED-receipt.json'))
+          assert p['holdout_match_count']==135
+          assert p['holdout_cohort_count']==3
+          assert p['holdout_labels_opened'] is False
+          assert p['holdout_evaluated'] is False
+          assert r['holdout_rows_materialized']==0
+          assert r['holdout_labels_opened'] is False
+          assert r['holdout_evaluated'] is False
+          print('TASK0061_PREOPEN_SEAL_GATE=PASS')
+          PY
+          python -m py_compile task0061/evaluate_holdout.py modules/features/domain/explicit_maturity_v4.py task0036b/execute.py
+
+      - name: Prepare pinned StatsBomb repository metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMIT=b0bc9f22dd77c206ddedc1d742893b3bbe64baec
+          git clone --filter=blob:none --no-checkout https://github.com/hudl/open-data.git /tmp/open-data
+          git -C /tmp/open-data fetch --filter=blob:none --depth=1 origin "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse FETCH_HEAD)" = "$COMMIT"
+          git -C /tmp/open-data sparse-checkout init --no-cone
+          printf '/data/competitions.json\n/data/matches/\n' > /tmp/open-data/.git/info/sparse-checkout
+          git -C /tmp/open-data checkout --detach "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse HEAD)" = "$COMMIT"
+
+      - name: Freeze one-time external verdict rule before holdout body access
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/task0061
+          cat > /tmp/task0061/PREOPEN-CANDIDATE-CONTRACT.json <<'JSON'
+          {
+            "task_id": "TASK-0061",
+            "feature_key": "football.prematch.home_result_residual_maturity_shrunk.v4",
+            "feature_count": 1,
+            "C": 10.0,
+            "model_zone_count": 1909,
+            "calibration_count": 337,
+            "baseline_probability": 0.19434258774227345,
+            "platt_coefficient": -0.49038242361079365,
+            "platt_intercept": -2.0616038205565412,
+            "external_verdict_rule": "FAIL if calibrated point Brier improvement <=0; INCONCLUSIVE if point improvement >0 but paired-bootstrap 95% CI crosses zero; PASS only if point improvement >0 and CI lower bound >0",
+            "bootstrap_seed": 20260814,
+            "bootstrap_replicates": 50000,
+            "retuning_after_holdout": false
+          }
+          JSON
+          sha256sum /tmp/task0061/PREOPEN-CANDIDATE-CONTRACT.json | tee /tmp/task0061/PREOPEN-CANDIDATE-CONTRACT.sha256
+          echo 'TASK0061_CANDIDATE_AND_VERDICT_RULE_FROZEN=PASS'
+
+      - name: Fetch exactly 135 sealed holdout event blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          A=/tmp/task0053artifact/artifacts/TASK-0053
+          test "$(wc -l < "$A/holdout-event-paths.txt")" -eq 135
+          { printf '/data/competitions.json\n/data/matches/\n'; sed 's#^#/#' "$A/holdout-event-paths.txt"; } > /tmp/task0061-holdout-sparse-patterns
+          cp /tmp/task0061-holdout-sparse-patterns /tmp/open-data/.git/info/sparse-checkout
+          git -C /tmp/open-data read-tree -mu HEAD
+          echo 'TASK0061_HOLDOUT_BODY_ACCESS_BEGAN=TRUE'
+
+      - name: Evaluate frozen candidate exactly once
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m task0061.evaluate_holdout | tee /tmp/task0061/evaluation-summary.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/task0061/TASK-0061-VERIFIED-receipt.json'))
+          assert p['status']=='ONE_TIME_HOLDOUT_EVALUATED'
+          assert p['holdout_match_count']==135
+          assert p['exact_git_blob_verified_count']==135
+          assert p['holdout_label_count']==135
+          assert p['holdout_censored_count']==0
+          assert p['holdout_feature_row_count']==135
+          assert p['holdout_leakage_violation_count']==0
+          assert p['candidate_feature_count']==1
+          assert p['candidate_C']==10.0
+          assert p['candidate_contract_reproduced'] is True
+          assert p['holdout_labels_opened'] is True
+          assert p['holdout_evaluated'] is True
+          assert p['holdout_permanently_consumed'] is True
+          assert p['retuning_on_holdout_allowed'] is False
+          print('TASK0061_ONE_TIME_EVALUATION_GATE=PASS')
+          PY
+
+      - name: Assemble immutable result artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=/tmp/result/artifacts/TASK-0061
+          mkdir -p "$D"
+          cp /tmp/task0061/PREOPEN-CANDIDATE-CONTRACT.json "$D/"
+          cp /tmp/task0061/PREOPEN-CANDIDATE-CONTRACT.sha256 "$D/"
+          cp /tmp/task0061/holdout-materialized-minimal-core.json "$D/"
+          cp /tmp/task0061/holdout-labels-task0061.json "$D/"
+          cp /tmp/task0061/one-time-holdout-evaluation.json "$D/"
+          cp /tmp/task0061/TASK-0061-VERIFIED-receipt.json "$D/"
+          cp /tmp/task0061/evaluation-summary.json "$D/"
+          cd /tmp/result
+          find . -type f ! -name result-files.sha256 -print0 | sort -z | xargs -0 sha256sum > artifacts/TASK-0061/result-files.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: task0061-one-time-holdout-result
+          path: /tmp/result
+          if-no-files-found: error
+          retention-days: 7
