@@ -16,6 +16,8 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
