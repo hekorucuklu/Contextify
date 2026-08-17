@@ -1,0 +1,124 @@
+name: TASK-0102 Home-Team Shot Advantage Coverage Audit
+
+on:
+  push:
+    branches:
+      - task0102-shot-advantage-20260817
+    paths:
+      - task0102/**
+      - .github/workflows/task0102-shot-advantage.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile audit
+        run: python -m py_compile task0102/audit_shot_advantage.py task0094/audit_xg.py
+
+      - name: Prepare pinned StatsBomb metadata repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMIT=b0bc9f22dd77c206ddedc1d742893b3bbe64baec
+          git clone --filter=blob:none --no-checkout https://github.com/hudl/open-data.git /tmp/open-data
+          git -C /tmp/open-data fetch --filter=blob:none --depth=1 origin "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse FETCH_HEAD)" = "$COMMIT"
+          git -C /tmp/open-data sparse-checkout init --no-cone
+          printf '/data/competitions.json\n/data/matches/\n' > /tmp/open-data/.git/info/sparse-checkout
+          git -C /tmp/open-data checkout --detach "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse HEAD)" = "$COMMIT"
+
+      - name: Freeze metadata-only membership and fresh target-specific geometry
+        shell: bash
+        run: |
+          set -euo pipefail
+          python task0102/audit_shot_advantage.py freeze | tee /tmp/task0102-freeze-summary.json
+          python - <<'PY'
+          import json
+          m=json.load(open('/tmp/task0102/membership.json'))
+          g=json.load(open('/tmp/task0102/TASK-0102-FRESH-SPLIT-CONTRACT.json'))
+          r=json.load(open('/tmp/task0102/TASK-0102-GEOMETRY-FREEZE-RECEIPT.json'))
+          assert m['development_match_count']==2246
+          assert m['development_cohort_count']==21
+          assert m['holdout_match_count']==135
+          assert m['holdout_event_bodies_opened'] is False
+          assert g['development_count']==2246
+          assert len(g['folds'])==6
+          assert g['labels_read_for_geometry_design'] is False
+          assert g['shot_counts_read_for_geometry_design'] is False
+          assert g['prevalence_read_for_geometry_design'] is False
+          assert r['holdout_event_bodies_opened'] is False
+          print('TASK0102_GEOMETRY_FREEZE_GATE=PASS')
+          PY
+
+      - name: Materialize development event blobs only
+        shell: bash
+        run: |
+          set -euo pipefail
+          { printf '/data/competitions.json\n/data/matches/\n'; sed 's#^#/#' /tmp/task0102/development-event-paths.txt; } > /tmp/task0102-sparse-patterns
+          cp /tmp/task0102-sparse-patterns /tmp/open-data/.git/info/sparse-checkout
+          git -C /tmp/open-data read-tree -mu HEAD
+          test "$(wc -l < /tmp/task0102/development-event-paths.txt)" -eq 2246
+
+      - name: Audit Shot coverage, materialize labels and verify geometry immutability
+        shell: bash
+        run: |
+          set -euo pipefail
+          python task0102/audit_shot_advantage.py audit | tee /tmp/task0102-audit-summary.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/task0102/TASK-0102-VERIFIED-receipt.json'))
+          assert p['status']=='VERIFIED'
+          assert p['development_match_count']==2246
+          assert p['development_cohort_count']==21
+          assert p['exact_git_blob_verified_count']==2246
+          assert p['eligible_match_count']==2246
+          assert p['censored_match_count']==0
+          assert p['positive_count'] + p['negative_count'] == 2246
+          assert p['geometry_byte_identical_after_label_materialization'] is True
+          assert p['holdout_event_bodies_opened'] is False
+          assert p['model_training_performed'] is False
+          assert p['feature_selection_performed'] is False
+          assert p['contract']['admission_status']=='ADMIT_FOR_FEATURE_AUDIT_AND_BASELINE'
+          print('TASK0102_PHYSICAL_COVERAGE_GATE=PASS')
+          PY
+
+      - name: Determinism check
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/task0102
+          sha256sum development-home-team-shot-advantage-labels-v1.json TASK-0102-TARGET-CONTRACT.json TASK-0102-VERIFIED-receipt.json > /tmp/task0102-first.sha256
+          cd "$GITHUB_WORKSPACE"
+          python task0102/audit_shot_advantage.py audit >/tmp/task0102/rebuild-summary.json
+          cd /tmp/task0102
+          sha256sum development-home-team-shot-advantage-labels-v1.json TASK-0102-TARGET-CONTRACT.json TASK-0102-VERIFIED-receipt.json > /tmp/task0102-second.sha256
+          diff -u /tmp/task0102-first.sha256 /tmp/task0102-second.sha256
+          printf 'TASK0102_CHECK_GATE=PASS\n' > /tmp/task0102/check-gate.txt
+
+      - name: Assemble artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/task0102-freeze-summary.json /tmp/task0102/
+          cp /tmp/task0102-audit-summary.json /tmp/task0102/
+          python task0102/audit_shot_advantage.py manifest
+          mkdir -p /tmp/result/artifacts/TASK-0102
+          cp /tmp/task0102/* /tmp/result/artifacts/TASK-0102/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: task0102-shot-advantage-verified-result
+          path: /tmp/result
+          if-no-files-found: error
+          retention-days: 7
