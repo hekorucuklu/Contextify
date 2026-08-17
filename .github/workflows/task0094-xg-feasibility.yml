@@ -1,0 +1,119 @@
+name: TASK-0094 Home-Team xG Advantage Feasibility Audit
+
+on:
+  push:
+    branches:
+      - task0094-xg-feasibility-20260817
+    paths:
+      - task0094/**
+      - .github/workflows/task0094-xg-feasibility.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile audit
+        run: python -m py_compile task0094/audit_xg.py
+
+      - name: Prepare pinned StatsBomb metadata repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMIT=b0bc9f22dd77c206ddedc1d742893b3bbe64baec
+          git clone --filter=blob:none --no-checkout https://github.com/hudl/open-data.git /tmp/open-data
+          git -C /tmp/open-data fetch --filter=blob:none --depth=1 origin "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse FETCH_HEAD)" = "$COMMIT"
+          git -C /tmp/open-data sparse-checkout init --no-cone
+          printf '/data/competitions.json\n/data/matches/\n' > /tmp/open-data/.git/info/sparse-checkout
+          git -C /tmp/open-data checkout --detach "$COMMIT"
+          test "$(git -C /tmp/open-data rev-parse HEAD)" = "$COMMIT"
+
+      - name: Reproduce frozen TASK-0053 development membership metadata-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python task0094/audit_xg.py freeze | tee /tmp/task0094-freeze-summary.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/task0094/membership.json'))
+          assert p['source_commit']=='b0bc9f22dd77c206ddedc1d742893b3bbe64baec'
+          assert p['development_match_count']==2246
+          assert p['development_cohort_count']==21
+          assert p['holdout_match_count']==135
+          assert p['holdout_cohort_count']==3
+          assert p['holdout_event_bodies_opened'] is False
+          print('TASK0094_MEMBERSHIP_GATE=PASS')
+          PY
+
+      - name: Materialize development event blobs only
+        shell: bash
+        run: |
+          set -euo pipefail
+          { printf '/data/competitions.json\n/data/matches/\n'; sed 's#^#/#' /tmp/task0094/development-event-paths.txt; } > /tmp/task0094-sparse-patterns
+          cp /tmp/task0094-sparse-patterns /tmp/open-data/.git/info/sparse-checkout
+          git -C /tmp/open-data read-tree -mu HEAD
+          test "$(wc -l < /tmp/task0094/development-event-paths.txt)" -eq 2246
+
+      - name: Audit xG field coverage and freeze target contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python task0094/audit_xg.py audit | tee /tmp/task0094-audit-summary.json
+          python - <<'PY'
+          import json
+          p=json.load(open('/tmp/task0094/TASK-0094-VERIFIED-receipt.json'))
+          assert p['development_match_count']==2246
+          assert p['development_cohort_count']==21
+          assert p['exact_git_blob_verified_count']==2246
+          assert p['holdout_event_bodies_opened'] is False
+          assert p['model_training_performed'] is False
+          assert p['feature_selection_performed'] is False
+          assert p['eligible_match_count'] + p['censored_match_count'] == 2246
+          assert p['non_shootout_shot_with_numeric_xg_count'] + p['non_shootout_shot_missing_xg_count'] == p['non_shootout_shot_count']
+          if p['status']=='VERIFIED':
+              assert p['match_coverage'] >= 0.99
+              assert p['shot_xg_coverage'] == 1.0
+              assert p['non_shootout_shot_missing_xg_count'] == 0
+              assert p['contract']['admission_status']=='ADMIT_FOR_TARGET_SPECIFIC_LABEL_MATERIALIZATION'
+          print('TASK0094_PHYSICAL_COVERAGE_GATE='+('PASS' if p['status']=='VERIFIED' else 'FAIL'))
+          PY
+
+      - name: Determinism check
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/task0094
+          sha256sum match-level-xg-coverage.json TASK-0094-target-contract.json TASK-0094-VERIFIED-receipt.json > /tmp/task0094-first.sha256
+          cd "$GITHUB_WORKSPACE"
+          python task0094/audit_xg.py audit >/tmp/task0094/rebuild-summary.json
+          cd /tmp/task0094
+          sha256sum match-level-xg-coverage.json TASK-0094-target-contract.json TASK-0094-VERIFIED-receipt.json > /tmp/task0094-second.sha256
+          diff -u /tmp/task0094-first.sha256 /tmp/task0094-second.sha256
+          printf 'TASK0094_CHECK_GATE=PASS\n' > /tmp/task0094/check-gate.txt
+
+      - name: Assemble artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/task0094-freeze-summary.json /tmp/task0094/
+          cp /tmp/task0094-audit-summary.json /tmp/task0094/
+          python task0094/audit_xg.py manifest
+          mkdir -p /tmp/result/artifacts/TASK-0094
+          cp /tmp/task0094/* /tmp/result/artifacts/TASK-0094/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: task0094-xg-feasibility-verified-result
+          path: /tmp/result
+          if-no-files-found: error
+          retention-days: 7
